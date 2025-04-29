@@ -1,0 +1,5 @@
+numpy==1.26.3
+pandas==2.2.0
+matplotlib==3.8.2
+PyQt5==5.15.9
+plotly==5.18.0 
