@@ -334,10 +334,10 @@ def main():
     if problem_type == "Random Problem":
         # Random problem parameters
         random_params = {}
-        random_params["num_jobs"] = st.sidebar.slider("Number of Jobs", 2, 20, 5)
-        random_params["num_machines"] = st.sidebar.slider("Number of Machines", 2, 10, 3)
-        random_params["min_proc_time"] = st.sidebar.slider("Min Processing Time", 1, 20, 1)
-        random_params["max_proc_time"] = st.sidebar.slider("Max Processing Time", 5, 50, 20)
+        random_params["num_jobs"] = st.sidebar.slider("Number of Jobs", 2, 100, 5)
+        random_params["num_machines"] = st.sidebar.slider("Number of Machines", 2, 50, 3)
+        random_params["min_proc_time"] = st.sidebar.slider("Min Processing Time", 1, 30, 1)
+        random_params["max_proc_time"] = st.sidebar.slider("Max Processing Time", 5, 80, 20)
         random_params["seed"] = st.sidebar.number_input("Random Seed", 0, 999, 42)
         job_data = None
     else:
