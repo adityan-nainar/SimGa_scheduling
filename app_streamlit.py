@@ -199,35 +199,54 @@ def display_results(results):
         
         # Computation time comparison
         if "computation_time" in next(iter(results.values())):
-            fig, ax = plt.subplots(figsize=(10, 6))
+            col3, col4 = st.columns(2)
             
-            # Extract data
-            comp_time_values = [float(r.get("computation_time", 0)) for r in results.values()]
-            comp_time_labels = list(results.keys())
+            with col3:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Extract data
+                comp_time_values = [float(r.get("computation_time", 0)) for r in results.values()]
+                comp_time_labels = list(results.keys())
+                
+                # Create bar chart
+                bars = ax.bar(comp_time_labels, comp_time_values)
+                
+                # Add labels
+                for i, bar in enumerate(bars):
+                    height = bar.get_height()
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        height + 0.001,
+                        f'{comp_time_values[i]:.4f}',
+                        ha='center',
+                        va='bottom'
+                    )
+                
+                ax.set_xlabel('Algorithm')
+                ax.set_ylabel('Computation Time (s)')
+                ax.set_title('Comparison of Computation Time')
+                ax.grid(True, linestyle='--', alpha=0.7, axis='y')
+                
+                st.pyplot(fig)
             
-            # Create bar chart
-            bars = ax.bar(comp_time_labels, comp_time_values)
-            
-            # Add labels
-            for i, bar in enumerate(bars):
-                height = bar.get_height()
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    height + 0.001,
-                    f'{comp_time_values[i]:.4f}',
-                    ha='center',
-                    va='bottom'
-                )
-            
-            ax.set_xlabel('Algorithm')
-            ax.set_ylabel('Computation Time (s)')
-            ax.set_title('Comparison of Computation Time')
-            ax.grid(True, linestyle='--', alpha=0.7, axis='y')
-            
-            st.pyplot(fig)
+            # Display GA convergence in the fourth quadrant of the grid
+            with col4:
+                if "Genetic Algorithm" in results and "best_fitness_history" in results["Genetic Algorithm"]:
+                    fig, ax = plot_ga_convergence(results["Genetic Algorithm"])
+                    st.pyplot(fig)
+                else:
+                    # Create a placeholder plot if GA results not available
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    ax.text(0.5, 0.5, "GA Convergence data not available", 
+                            ha='center', va='center', fontsize=12)
+                    ax.set_title("Genetic Algorithm Convergence")
+                    ax.set_xlabel("Generation")
+                    ax.set_ylabel("Fitness")
+                    ax.grid(False)
+                    st.pyplot(fig)
     
-    # Display GA convergence
-    if "Genetic Algorithm" in results and "best_fitness_history" in results["Genetic Algorithm"]:
+    # Only display GA convergence separately if we don't have multiple algorithms for comparison
+    elif "Genetic Algorithm" in results and "best_fitness_history" in results["Genetic Algorithm"]:
         st.subheader("Genetic Algorithm Convergence")
         fig, ax = plot_ga_convergence(results["Genetic Algorithm"])
         st.pyplot(fig)
