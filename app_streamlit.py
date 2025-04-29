@@ -232,6 +232,41 @@ def display_results(results):
         fig, ax = plot_ga_convergence(results["Genetic Algorithm"])
         st.pyplot(fig)
 
+def show_key_terms():
+    """Display explanations of key JSSP terms."""
+    st.markdown("""
+    ## Key Terms in Job Shop Scheduling
+
+    ### Performance Metrics
+    - **Makespan**: The total completion time of all jobs (time when the last job finishes). This is the most common objective to minimize.
+    - **Flow Time**: The time a job spends in the system from start to finish, including waiting time.
+    - **Total Flow Time**: The sum of flow times for all jobs.
+    - **Average Flow Time**: The average time each job spends in the system.
+    - **Tardiness**: The amount of time a job is completed after its due date.
+    - **Lateness**: The difference between completion time and due date (can be negative).
+    - **Weighted Metrics**: Any of the above metrics where jobs have different priorities or weights.
+
+    ### Scheduling Concepts
+    - **Operation**: A single task that must be performed on a specific machine for a specific duration.
+    - **Job**: A sequence of operations that must be processed in a specific order.
+    - **Machine**: A resource that can process one operation at a time.
+    - **Schedule**: An assignment of operations to machines with specific start times.
+    - **Feasible Schedule**: A schedule that satisfies all constraints (no overlaps, correct sequence).
+    - **Optimal Schedule**: A feasible schedule that minimizes the objective function.
+
+    ### Scheduling Rules
+    - **FIFO (First-In-First-Out)**: Operations are processed in the order they become available.
+    - **SPT (Shortest Processing Time)**: Operations with shorter processing times are scheduled first.
+    - **LPT (Longest Processing Time)**: Operations with longer processing times are scheduled first.
+    - **EDD (Earliest Due Date)**: Jobs with earlier due dates are prioritized.
+
+    ### Advanced Techniques
+    - **Genetic Algorithm**: Evolutionary approach that generates, evolves, and selects schedules.
+    - **Simulated Annealing**: Probabilistic technique that mimics the physical annealing process.
+    - **Tabu Search**: Meta-heuristic that uses memory structures to avoid cycling in local searches.
+    - **Branch and Bound**: Systematic method that explores the solution space by branching decisions.
+    """)
+
 def show_info():
     """Display information about JSSP."""
     st.markdown("""
@@ -267,134 +302,106 @@ def show_info():
 def main():
     st.title("Job Shop Scheduling Problem (JSSP) Simulator")
     
-    # Create tabs for different sections
-    tab1, tab2, tab3 = st.tabs(["Simulator", "Results", "About"])
+    # Sidebar configuration
+    st.sidebar.title("Problem Configuration")
+    
+    # Problem type selection
+    problem_type = st.sidebar.radio(
+        "Problem Type",
+        ["Random Problem", "Custom Problem"],
+        horizontal=False
+    )
+    
+    if problem_type == "Random Problem":
+        # Random problem parameters
+        random_params = {}
+        random_params["num_jobs"] = st.sidebar.slider("Number of Jobs", 2, 20, 5)
+        random_params["num_machines"] = st.sidebar.slider("Number of Machines", 2, 10, 3)
+        random_params["min_proc_time"] = st.sidebar.slider("Min Processing Time", 1, 20, 1)
+        random_params["max_proc_time"] = st.sidebar.slider("Max Processing Time", 5, 50, 20)
+        random_params["seed"] = st.sidebar.number_input("Random Seed", 0, 999, 42)
+        job_data = None
+    else:
+        # Custom problem editor
+        st.sidebar.subheader("Job Operations Editor")
+        
+        # Initialize session state for job data if not exists
+        if "job_data" not in st.session_state:
+            st.session_state.job_data = pd.DataFrame([
+                {"Job ID": 1, "Machine ID": 0, "Processing Time": 5},
+                {"Job ID": 1, "Machine ID": 1, "Processing Time": 10},
+                {"Job ID": 2, "Machine ID": 1, "Processing Time": 8},
+                {"Job ID": 2, "Machine ID": 0, "Processing Time": 6}
+            ])
+        
+        # Edit the dataframe
+        edited_df = st.sidebar.data_editor(
+            st.session_state.job_data,
+            num_rows="dynamic",
+            use_container_width=True
+        )
+        
+        # Update session state
+        st.session_state.job_data = edited_df
+        
+        # Convert dataframe to list
+        job_data = []
+        for _, row in edited_df.iterrows():
+            job_data.append([
+                int(row["Job ID"]),
+                int(row["Machine ID"]),
+                int(row["Processing Time"])
+            ])
+        random_params = None
+    
+    # Algorithm selection
+    st.sidebar.title("Algorithm Configuration")
+    
+    fifo_selected = st.sidebar.checkbox("FIFO", value=True)
+    spt_selected = st.sidebar.checkbox("SPT", value=True)
+    ga_selected = st.sidebar.checkbox("Genetic Algorithm", value=True)
+    
+    # Store selected algorithms in session state
+    selected_algos = []
+    if fifo_selected:
+        selected_algos.append("FIFO")
+    if spt_selected:
+        selected_algos.append("SPT")
+    if ga_selected:
+        selected_algos.append("Genetic Algorithm")
+    st.session_state.selected_algos = selected_algos
+    
+    # Genetic Algorithm parameters
+    if ga_selected:
+        st.sidebar.subheader("Genetic Algorithm Parameters")
+        
+        st.session_state.population_size = st.sidebar.slider("Population Size", 10, 200, 50)
+        st.session_state.generations = st.sidebar.slider("Generations", 10, 500, 100)
+        st.session_state.crossover_rate = st.sidebar.slider("Crossover Rate", 0.1, 1.0, 0.8, 0.1)
+        st.session_state.mutation_rate = st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.2, 0.1)
+    
+    # Run simulation button
+    if st.sidebar.button("Run Simulation", type="primary", use_container_width=True):
+        with st.spinner("Running simulation..."):
+            results = run_simulation(problem_type, random_params, job_data)
+            st.session_state.results = results
+        st.sidebar.success("Simulation completed!")
+    
+    # Main content area - tabs for results, about, and key terms
+    tab1, tab2, tab3 = st.tabs(["Results", "About JSSP", "Key Terms"])
     
     with tab1:
-        st.header("Problem Configuration")
-        
-        # Sidebar for configuration
-        with st.expander("Problem Configuration", expanded=True):
-            # Problem type selection
-            problem_type = st.radio(
-                "Problem Type",
-                ["Random Problem", "Custom Problem"],
-                horizontal=True
-            )
-            
-            if problem_type == "Random Problem":
-                # Random problem parameters
-                col1, col2 = st.columns(2)
-                with col1:
-                    num_jobs = st.slider("Number of Jobs", 2, 20, 5)
-                    num_machines = st.slider("Number of Machines", 2, 10, 3)
-                
-                with col2:
-                    min_proc_time = st.slider("Min Processing Time", 1, 20, 1)
-                    max_proc_time = st.slider("Max Processing Time", 5, 50, 20)
-                
-                seed = st.number_input("Random Seed", 0, 999, 42)
-                random_params = {
-                    "num_jobs": num_jobs,
-                    "num_machines": num_machines,
-                    "min_proc_time": min_proc_time,
-                    "max_proc_time": max_proc_time,
-                    "seed": seed
-                }
-                job_data = None
-            else:
-                # Custom problem editor
-                st.subheader("Job Operations Editor")
-                
-                # Initialize session state for job data if not exists
-                if "job_data" not in st.session_state:
-                    st.session_state.job_data = pd.DataFrame([
-                        {"Job ID": 1, "Machine ID": 0, "Processing Time": 5},
-                        {"Job ID": 1, "Machine ID": 1, "Processing Time": 10},
-                        {"Job ID": 2, "Machine ID": 1, "Processing Time": 8},
-                        {"Job ID": 2, "Machine ID": 0, "Processing Time": 6}
-                    ])
-                
-                # Edit the dataframe
-                edited_df = st.data_editor(
-                    st.session_state.job_data,
-                    num_rows="dynamic",
-                    use_container_width=True
-                )
-                
-                # Update session state
-                st.session_state.job_data = edited_df
-                
-                # Convert dataframe to list
-                job_data = []
-                for _, row in edited_df.iterrows():
-                    job_data.append([
-                        int(row["Job ID"]),
-                        int(row["Machine ID"]),
-                        int(row["Processing Time"])
-                    ])
-                random_params = None
-        
-        with st.expander("Algorithm Configuration", expanded=True):
-            # Algorithm selection
-            st.subheader("Select Algorithms")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                fifo_selected = st.checkbox("FIFO", value=True)
-            with col2:
-                spt_selected = st.checkbox("SPT", value=True)
-            with col3:
-                ga_selected = st.checkbox("Genetic Algorithm", value=True)
-            
-            # Store selected algorithms in session state
-            selected_algos = []
-            if fifo_selected:
-                selected_algos.append("FIFO")
-            if spt_selected:
-                selected_algos.append("SPT")
-            if ga_selected:
-                selected_algos.append("Genetic Algorithm")
-            st.session_state.selected_algos = selected_algos
-            
-            # Genetic Algorithm parameters
-            if ga_selected:
-                st.subheader("Genetic Algorithm Parameters")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    population_size = st.slider("Population Size", 10, 200, 50)
-                    generations = st.slider("Generations", 10, 500, 100)
-                
-                with col2:
-                    crossover_rate = st.slider("Crossover Rate", 0.1, 1.0, 0.8, 0.1)
-                    mutation_rate = st.slider("Mutation Rate", 0.0, 1.0, 0.2, 0.1)
-                
-                # Store GA parameters in session state
-                st.session_state.population_size = population_size
-                st.session_state.generations = generations
-                st.session_state.crossover_rate = crossover_rate
-                st.session_state.mutation_rate = mutation_rate
-        
-        # Run simulation button
-        if st.button("Run Simulation", type="primary", use_container_width=True):
-            with st.spinner("Running simulation..."):
-                results = run_simulation(problem_type, random_params, job_data)
-                st.session_state.results = results
-            st.success("Simulation completed!")
-            st.rerun()
-    
-    with tab2:
-        st.header("Results")
         # Display results if available
         if "results" in st.session_state:
             display_results(st.session_state.results)
         else:
-            st.info("No results to display. Run a simulation in the Simulator tab first.")
+            st.info("Configure parameters in the sidebar and click 'Run Simulation' to see results.")
+    
+    with tab2:
+        show_info()
     
     with tab3:
-        st.header("About")
-        show_info()
+        show_key_terms()
 
 if __name__ == "__main__":
     main() 

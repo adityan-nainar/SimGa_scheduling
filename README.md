@@ -9,7 +9,7 @@ This project implements a simulation framework for solving Job Shop Scheduling P
     - `genetic.py` - Genetic Algorithm implementation
     - `simple.py` - Simple rules like FIFO and SPT
   - `visualization.py` - Visualization utilities
-- `app_qt.py` - PyQt5 desktop application for UI
+- `app_streamlit.py` - Streamlit web application with interactive UI
 
 ## Setup
 ```bash
@@ -21,7 +21,15 @@ pip install -r requirements.txt
 python -m jssp.main
 ```
 
-## Running the Desktop UI
+## Running the Web UI
 ```bash
-python app_qt.py
-``` 
+streamlit run app_streamlit.py
+```
+
+## Features
+- Interactive problem configuration with random or custom instances
+- Multiple scheduling algorithms (FIFO, SPT, and Genetic Algorithm)
+- Visualization of schedules using Gantt charts
+- Performance metrics comparison
+- Genetic Algorithm parameter tuning
+- Detailed explanations of scheduling concepts and terminology 
