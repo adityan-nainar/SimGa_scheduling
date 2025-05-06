@@ -24,10 +24,11 @@ class Operation:
 class Job:
     """Represents a job consisting of a sequence of operations."""
     
-    def __init__(self, job_id: int):
+    def __init__(self, job_id: int, delay_probability: float = 0.0):
         self.job_id = job_id
         self.operations: List[Operation] = []
         self.arrival_time = 0  # When the job enters the system
+        self.delay_probability = delay_probability  # Probability of job arrival delay
     
     def add_operation(self, machine_id: int, processing_time: int) -> None:
         """Adds an operation to this job's sequence."""
@@ -48,15 +49,20 @@ class Job:
             return None
         return max(op.end_time for op in self.operations)
     
+    def is_delayed(self) -> bool:
+        """Determine if the job is delayed based on the delay probability."""
+        return random.random() < self.delay_probability
+    
     def __repr__(self) -> str:
         return f"Job {self.job_id}: {len(self.operations)} operations, total time: {self.total_processing_time()}"
 
 class Machine:
     """Represents a machine that processes operations."""
     
-    def __init__(self, machine_id: int):
+    def __init__(self, machine_id: int, delay_probability: float = 0.0):
         self.machine_id = machine_id
         self.scheduled_operations: List[Tuple[Job, Operation]] = []
+        self.delay_probability = delay_probability  # Probability of machine availability delay
     
     def schedule_operation(self, job: Job, operation: Operation, start_time: int) -> None:
         """Schedule an operation on this machine."""
@@ -84,6 +90,10 @@ class Machine:
         available_times = [op.end_time for _, op in self.scheduled_operations 
                          if op.end_time > time]
         return min(available_times) if available_times else time
+    
+    def is_delayed(self) -> bool:
+        """Determine if the machine is delayed based on the delay probability."""
+        return random.random() < self.delay_probability
     
     def __repr__(self) -> str:
         return f"Machine {self.machine_id}: {len(self.scheduled_operations)} scheduled operations"

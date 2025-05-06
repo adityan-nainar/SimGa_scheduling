@@ -91,6 +91,14 @@ class Chromosome:
                 machine.get_earliest_available_time()
             )
             
+            # Adjust for job delay
+            if job.is_delayed():
+                earliest_start_time += random.randint(1, 5)  # Random delay between 1 to 5 time units
+            
+            # Adjust for machine delay
+            if machine.is_delayed():
+                earliest_start_time += random.randint(1, 5)  # Random delay between 1 to 5 time units
+            
             # Schedule the operation
             machine.schedule_operation(job, operation, earliest_start_time)
             

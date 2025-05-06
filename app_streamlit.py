@@ -68,6 +68,12 @@ def run_simulation(problem_type, random_params, job_data):
             max_proc_time=random_params["max_proc_time"],
             seed=random_params["seed"]
         )
+        
+        # Apply delay probabilities to jobs and machines
+        for job in instance.jobs:
+            job.delay_probability = st.session_state['job_delay_prob']
+        for machine in instance.machines:
+            machine.delay_probability = st.session_state['machine_delay_prob']
     else:
         # Group by job ID
         jobs_by_id = {}
@@ -84,10 +90,14 @@ def run_simulation(problem_type, random_params, job_data):
         
         # Create jobs
         for job_id in sorted(jobs_by_id.keys()):
-            job = Job(job_id)
+            job = Job(job_id, delay_probability=st.session_state['job_delay_prob'])
             for machine_id, proc_time in jobs_by_id[job_id]:
                 job.add_operation(machine_id, proc_time)
             instance.add_job(job)
+        
+        # Apply delay probabilities to machines
+        for machine in instance.machines:
+            machine.delay_probability = st.session_state['machine_delay_prob']
     
     # Run selected algorithms
     results = {}
@@ -319,10 +329,31 @@ def show_info():
     """)
 
 def main():
-    st.title("Job Shop Scheduling Problem (JSSP) Simulator")
+    st.title("Job Shop Scheduling Problem Simulator")
+    st.sidebar.header("Simulation Configuration")
     
-    # Sidebar configuration
-    st.sidebar.title("Problem Configuration")
+    # Add sliders for delay probabilities
+    job_delay_prob = st.sidebar.slider(
+        "Job Arrival Delay Probability",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.1,
+        step=0.01,
+        help="Probability that a job will be delayed upon arrival."
+    )
+    
+    machine_delay_prob = st.sidebar.slider(
+        "Machine Availability Delay Probability",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.1,
+        step=0.01,
+        help="Probability that a machine will be unavailable when needed."
+    )
+    
+    # Store these probabilities in session state for use in the simulation
+    st.session_state['job_delay_prob'] = job_delay_prob
+    st.session_state['machine_delay_prob'] = machine_delay_prob
     
     # Problem type selection
     problem_type = st.sidebar.radio(
