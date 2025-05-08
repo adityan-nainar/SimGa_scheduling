@@ -618,92 +618,62 @@ def display_results(results):
                 
                 # Plot job waiting time analysis
                 if "gantt_data" in result_with_arrivals:
-                    job_data = {}
-                    
-                    # Group operations by job
-                    for item in result_with_arrivals["gantt_data"]:
-                        job_name = item["job"]
-                        if job_name not in job_data:
-                            job_data[job_name] = {
-                                "operations": [],
-                                "start": float('inf'),
-                                "end": 0
-                            }
-                        job_data[job_name]["operations"].append(item)
-                        job_data[job_name]["start"] = min(job_data[job_name]["start"], item["start"])
-                        job_data[job_name]["end"] = max(job_data[job_name]["end"], item["end"])
-                    
-                    # Calculate waiting times
-                    waiting_data = []
-                    for job_name, job_info in job_data.items():
-                        # Find matching arrival data
-                        arrival_time = 0
-                        for item in arrival_data:
-                            if item["job"] == job_name:
-                                arrival_time = item["arrival_time"]
-                                break
+                    try:
+                        job_data = {}
                         
-                        waiting_time = job_info["start"] - arrival_time
-                        processing_time = job_info["end"] - job_info["start"]
-                        flow_time = job_info["end"] - arrival_time
+                        # Group operations by job
+                        for item in result_with_arrivals["gantt_data"]:
+                            job_name = item["job"]
+                            if job_name not in job_data:
+                                job_data[job_name] = {
+                                    "operations": [],
+                                    "start": float('inf'),
+                                    "end": 0
+                                }
+                            job_data[job_name]["operations"].append(item)
+                            job_data[job_name]["start"] = min(job_data[job_name]["start"], item["start"])
+                            job_data[job_name]["end"] = max(job_data[job_name]["end"], item["end"])
                         
-                        waiting_data.append({
-                            "Job": job_name,
-                            "Arrival Time": arrival_time,
-                            "First Operation Start": job_info["start"],
-                            "Last Operation End": job_info["end"],
-                            "Waiting Time": waiting_time,
-                            "Processing Time": processing_time,
-                            "Flow Time": flow_time
-                        })
-                    
-                    # Create a dataframe for analysis
-                    waiting_df = pd.DataFrame(waiting_data)
-                    
-                    # Create a stacked bar chart for time breakdown
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    
-                    jobs = waiting_df["Job"]
-                    waiting_times = waiting_df["Waiting Time"]
-                    processing_times = waiting_df["Processing Time"]
-                    
-                    # Plot stacked bars
-                    ax.barh(jobs, waiting_times, color='lightblue', label='Waiting Time')
-                    ax.barh(jobs, processing_times, left=waiting_times, color='lightgreen', label='Processing Time')
-                    
-                    # Add value labels
-                    for i, (wait, proc) in enumerate(zip(waiting_times, processing_times)):
-                        # Add total flow time
-                        total = wait + proc
-                        ax.text(total + 1, i, f"Total: {total:.1f}", va='center')
+                        # Calculate waiting times
+                        waiting_data = []
+                        for job_name, job_info in job_data.items():
+                            # Find matching arrival data
+                            arrival_time = 0
+                            for item in arrival_data:
+                                if item["job"] == job_name:
+                                    arrival_time = item["arrival_time"]
+                                    break
+                            
+                            waiting_time = job_info["start"] - arrival_time
+                            processing_time = job_info["end"] - job_info["start"]
+                            flow_time = job_info["end"] - arrival_time
+                            
+                            waiting_data.append({
+                                "Job": job_name,
+                                "Arrival Time": arrival_time,
+                                "First Operation Start": job_info["start"],
+                                "Last Operation End": job_info["end"],
+                                "Waiting Time": waiting_time,
+                                "Processing Time": processing_time,
+                                "Flow Time": flow_time
+                            })
                         
-                        # Add waiting and processing times if big enough to fit text
-                        if wait > 5:
-                            ax.text(wait/2, i, f"{wait:.1f}", va='center', ha='center')
-                        if proc > 5:
-                            ax.text(wait + proc/2, i, f"{proc:.1f}", va='center', ha='center')
-                    
-                    ax.set_title("Job Time Breakdown")
-                    ax.set_xlabel("Time")
-                    ax.set_ylabel("Job")
-                    ax.legend(loc='upper right')
-                    ax.grid(True, linestyle='--', alpha=0.7, axis='x')
-                    
-                    st.pyplot(fig)
-                    
-                    # Display statistics table
-                    st.subheader("Job Timing Statistics")
-                    stats_df = waiting_df[["Job", "Arrival Time", "Waiting Time", "Processing Time", "Flow Time"]]
-                    st.dataframe(stats_df, use_container_width=True)
-                    
-                    # Calculate and display averages
-                    if len(waiting_df) > 0:
-                        avg_wait = waiting_df["Waiting Time"].mean()
-                        avg_flow = waiting_df["Flow Time"].mean()
-                        st.write(f"Average waiting time: {avg_wait:.2f}")
-                        st.write(f"Average flow time: {avg_flow:.2f}")
-                    else:
-                        st.write("No job timing data available.")
+                        # Create a simple table view instead of visualization
+                        if waiting_data:
+                            st.subheader("Job Timing Statistics")
+                            waiting_df = pd.DataFrame(waiting_data)
+                            st.dataframe(waiting_df, use_container_width=True)
+                            
+                            # Calculate and display averages
+                            avg_wait = waiting_df["Waiting Time"].mean()
+                            avg_flow = waiting_df["Flow Time"].mean()
+                            st.write(f"Average waiting time: {avg_wait:.2f}")
+                            st.write(f"Average flow time: {avg_flow:.2f}")
+                        else:
+                            st.info("No job timing data available for analysis.")
+                    except Exception as e:
+                        st.error(f"Error processing job timing data: {str(e)}")
+                        st.info("Please check the data format or try with different settings.")
             else:
                 st.info("All jobs have arrival time = 0. Enable job arrival time settings to see the analysis.")
         else:
