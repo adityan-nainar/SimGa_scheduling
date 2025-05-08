@@ -541,12 +541,24 @@ def display_results(results):
                     # Create stats table
                     stats_data = []
                     for machine, durations in breakdown_by_machine.items():
+                        # Prevent division by zero
+                        if max_time > 0:
+                            downtime_percentage = f"{(sum(durations) / max_time * 100):.2f}%"
+                        else:
+                            downtime_percentage = "N/A"
+                            
+                        # Calculate average repair time safely
+                        if durations and len(durations) > 0:
+                            avg_repair_time = sum(durations) / len(durations)
+                        else:
+                            avg_repair_time = 0
+                            
                         stats_data.append({
                             "Machine": machine,
                             "Number of Breakdowns": len(durations),
                             "Total Downtime": sum(durations),
-                            "Average Repair Time": sum(durations) / len(durations) if durations else 0,
-                            "Downtime Percentage": f"{(sum(durations) / max_time * 100):.2f}%"
+                            "Average Repair Time": avg_repair_time,
+                            "Downtime Percentage": downtime_percentage
                         })
                     
                     stats_df = pd.DataFrame(stats_data)
@@ -685,10 +697,13 @@ def display_results(results):
                     st.dataframe(stats_df, use_container_width=True)
                     
                     # Calculate and display averages
-                    avg_wait = waiting_df["Waiting Time"].mean()
-                    avg_flow = waiting_df["Flow Time"].mean()
-                    st.write(f"Average waiting time: {avg_wait:.2f}")
-                    st.write(f"Average flow time: {avg_flow:.2f}")
+                    if len(waiting_df) > 0:
+                        avg_wait = waiting_df["Waiting Time"].mean()
+                        avg_flow = waiting_df["Flow Time"].mean()
+                        st.write(f"Average waiting time: {avg_wait:.2f}")
+                        st.write(f"Average flow time: {avg_flow:.2f}")
+                    else:
+                        st.write("No job timing data available.")
             else:
                 st.info("All jobs have arrival time = 0. Enable job arrival time settings to see the analysis.")
         else:
