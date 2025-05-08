@@ -399,6 +399,70 @@ def show_info():
     * **Fitness**: Makespan (lower is better)
     """)
 
+def show_uncertainty_info():
+    """Display information about uncertainty features in JSSP."""
+    st.markdown("""
+    ## Uncertainty in Job Shop Scheduling
+    
+    This simulator adds several advanced features to model real-world uncertainty in job shop scheduling:
+    
+    ### 1. Job Arrival Times
+    
+    In real production environments, jobs typically arrive over time rather than all being available at the beginning:
+    
+    - **Exponential Distribution**: Models random arrivals with a constant arrival rate (λ)
+    - **Uniform Distribution**: Models arrivals spread evenly over a time window
+    
+    Job arrivals add dynamism to the scheduling problem and may require rescheduling strategies.
+    
+    ### 2. Processing Time Variability
+    
+    Real-world processing times are rarely deterministic due to:
+    
+    - Operator skill differences
+    - Material variations
+    - Machine condition fluctuations
+    - Environmental factors
+    
+    You can set a variability percentage (±%) which creates a uniform random variation around the nominal processing time.
+    
+    ### 3. Machine Breakdowns
+    
+    Machines can randomly fail during operation:
+    
+    - **Failure Rate**: Average number of failures per time unit
+    - **Repair Time**: Random duration between Min and Max values
+    
+    When a breakdown occurs, the current operation is interrupted and must be rescheduled after the repair is complete.
+    
+    ### 4. Robust Scheduling with Buffers
+    
+    The Genetic Algorithm implements a **Buffer Mutation** operator that deliberately inserts idle time buffers:
+    
+    - Buffers absorb unexpected delays
+    - Increase schedule resilience against disruptions
+    - Improve reliability in uncertain environments
+    
+    ### 5. Robust Fitness Evaluation
+    
+    With uncertainty enabled, schedules are evaluated using:
+    
+    - **K Simulations**: Each schedule is tested with K different random scenarios
+    - **Robust Fitness**: fitness = avg_makespan + α * std_dev
+    
+    Lower values are better, with α (stability weight) determining how much to penalize variable performance.
+    
+    ### 6. Rolling Horizon Rescheduling
+    
+    When unexpected events occur:
+    
+    1. Freeze operations in progress
+    2. Re-optimize the remaining operations
+    3. Replace the original schedule with the updated one
+    
+    This adaptive approach helps maintain efficiency despite uncertainty.
+    """)
+
 def main():
     st.title("Job Shop Scheduling Problem (JSSP) Simulator")
     
