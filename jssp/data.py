@@ -9,9 +9,21 @@ class Operation:
     def __init__(self, operation_id: int, machine_id: int, processing_time: int):
         self.operation_id = operation_id  # Position in the job sequence
         self.machine_id = machine_id
-        self.processing_time = processing_time
+        self.nominal_processing_time = processing_time  # Original processing time
+        self.processing_time = processing_time  # Actual processing time (may include variability)
         self.start_time: Optional[int] = None
         self.end_time: Optional[int] = None
+        self.remaining_time: Optional[int] = None  # For operations interrupted by breakdowns
+        
+    def apply_variability(self, delta: float) -> None:
+        """
+        Apply processing time variability.
+        
+        Args:
+            delta: Maximum proportion of variability (e.g., 0.2 for ±20%)
+        """
+        noise = random.uniform(-delta, delta)
+        self.processing_time = max(1, int(self.nominal_processing_time * (1.0 + noise)))
         
     def is_scheduled(self) -> bool:
         """Check if the operation has been scheduled."""
@@ -24,16 +36,19 @@ class Operation:
 class Job:
     """Represents a job consisting of a sequence of operations."""
     
-    def __init__(self, job_id: int, delay_probability: float = 0.0):
+    def __init__(self, job_id: int):
         self.job_id = job_id
         self.operations: List[Operation] = []
         self.arrival_time = 0  # When the job enters the system
-        self.delay_probability = delay_probability  # Probability of job arrival delay
     
     def add_operation(self, machine_id: int, processing_time: int) -> None:
         """Adds an operation to this job's sequence."""
         operation_id = len(self.operations)
         self.operations.append(Operation(operation_id, machine_id, processing_time))
+    
+    def set_arrival_time(self, arrival_time: float) -> None:
+        """Set the arrival time for this job."""
+        self.arrival_time = arrival_time
     
     def total_processing_time(self) -> int:
         """Calculate the total processing time for all operations in this job."""
@@ -49,20 +64,20 @@ class Job:
             return None
         return max(op.end_time for op in self.operations)
     
-    def is_delayed(self) -> bool:
-        """Determine if the job is delayed based on the delay probability."""
-        return random.random() < self.delay_probability
-    
     def __repr__(self) -> str:
         return f"Job {self.job_id}: {len(self.operations)} operations, total time: {self.total_processing_time()}"
 
 class Machine:
     """Represents a machine that processes operations."""
     
-    def __init__(self, machine_id: int, delay_probability: float = 0.0):
+    def __init__(self, machine_id: int):
         self.machine_id = machine_id
         self.scheduled_operations: List[Tuple[Job, Operation]] = []
-        self.delay_probability = delay_probability  # Probability of machine availability delay
+        self.breakdown_times: List[Tuple[float, float]] = []  # List of (start_time, end_time) for breakdowns
+        self.available = True  # Current availability status
+        self.failure_rate = 0.0  # Failures per time unit
+        self.min_repair_time = 0  # Minimum repair time
+        self.max_repair_time = 0  # Maximum repair time
     
     def schedule_operation(self, job: Job, operation: Operation, start_time: int) -> None:
         """Schedule an operation on this machine."""
@@ -72,6 +87,25 @@ class Machine:
         # Sort operations by start time to maintain timeline
         self.scheduled_operations.sort(key=lambda x: x[1].start_time)
     
+    def set_failure_parameters(self, failure_rate: float, min_repair_time: float, max_repair_time: float) -> None:
+        """Set the parameters for machine failures."""
+        self.failure_rate = failure_rate
+        self.min_repair_time = min_repair_time
+        self.max_repair_time = max_repair_time
+    
+    def add_breakdown(self, start_time: float, duration: float) -> None:
+        """Add a breakdown period for this machine."""
+        end_time = start_time + duration
+        self.breakdown_times.append((start_time, end_time))
+        self.breakdown_times.sort()  # Sort by start time
+    
+    def is_in_breakdown(self, time: float) -> bool:
+        """Check if the machine is in breakdown at the given time."""
+        for start, end in self.breakdown_times:
+            if start <= time < end:
+                return True
+        return False
+    
     def get_earliest_available_time(self) -> int:
         """Get the earliest time this machine is available for a new operation."""
         if not self.scheduled_operations:
@@ -80,6 +114,11 @@ class Machine:
     
     def is_available(self, time: int) -> bool:
         """Check if the machine is available at the given time."""
+        # Check if the machine is in breakdown
+        if self.is_in_breakdown(time):
+            return False
+            
+        # Check if there's an operation scheduled at this time
         for _, op in self.scheduled_operations:
             if op.start_time <= time < op.end_time:
                 return False
@@ -87,13 +126,16 @@ class Machine:
     
     def get_next_available_time(self, time: int) -> int:
         """Get the next time the machine becomes available after the given time."""
-        available_times = [op.end_time for _, op in self.scheduled_operations 
-                         if op.end_time > time]
+        # Get the end times of operations that end after the given time
+        op_end_times = [op.end_time for _, op in self.scheduled_operations 
+                       if op.end_time > time]
+        
+        # Get the end times of breakdowns that end after the given time
+        breakdown_end_times = [end for start, end in self.breakdown_times 
+                             if end > time]
+        
+        available_times = op_end_times + breakdown_end_times
         return min(available_times) if available_times else time
-    
-    def is_delayed(self) -> bool:
-        """Determine if the machine is delayed based on the delay probability."""
-        return random.random() < self.delay_probability
     
     def __repr__(self) -> str:
         return f"Machine {self.machine_id}: {len(self.scheduled_operations)} scheduled operations"
@@ -104,6 +146,7 @@ class JSSPInstance:
     def __init__(self, num_jobs: int = 0, num_machines: int = 0):
         self.jobs: List[Job] = []
         self.machines: List[Machine] = []
+        self.processing_time_variability: float = 0.0  # Delta for processing time variability
         
         # Initialize machines
         for i in range(num_machines):
@@ -121,6 +164,79 @@ class JSSPInstance:
         """Add a machine to the problem instance."""
         self.machines.append(machine)
     
+    def set_processing_time_variability(self, delta: float) -> None:
+        """Set the processing time variability parameter."""
+        self.processing_time_variability = delta
+        
+        # Apply variability to all existing operations
+        for job in self.jobs:
+            for op in job.operations:
+                op.apply_variability(delta)
+    
+    def generate_job_arrival_times(self, method: str = "exponential", lambda_arrival: float = 0.1, max_arrival_window: float = 100) -> None:
+        """
+        Generate arrival times for all jobs.
+        
+        Args:
+            method: Either 'exponential' or 'uniform'
+            lambda_arrival: Parameter for exponential distribution (only used if method='exponential')
+            max_arrival_window: Maximum arrival time (only used if method='uniform')
+        """
+        for i, job in enumerate(self.jobs):
+            if i == 0:  # First job arrives at time 0
+                job.arrival_time = 0
+            else:
+                if method == "exponential":
+                    # Exponential distribution
+                    job.arrival_time = self.jobs[i-1].arrival_time + random.expovariate(lambda_arrival)
+                else:
+                    # Uniform distribution
+                    job.arrival_time = random.uniform(0, max_arrival_window)
+    
+    def setup_machine_breakdowns(self, lambda_fail: float, min_repair: float, max_repair: float) -> None:
+        """
+        Set up parameters for machine breakdowns.
+        
+        Args:
+            lambda_fail: Failure rate per time unit
+            min_repair: Minimum repair time
+            max_repair: Maximum repair time
+        """
+        for machine in self.machines:
+            machine.set_failure_parameters(lambda_fail, min_repair, max_repair)
+    
+    def generate_machine_breakdowns(self, simulation_horizon: int) -> None:
+        """
+        Generate breakdown events for machines up to a simulation horizon.
+        
+        Args:
+            simulation_horizon: The time limit for simulation
+        """
+        for machine in self.machines:
+            if machine.failure_rate <= 0:
+                continue  # Skip machines with no failures
+                
+            current_time = 0
+            while current_time < simulation_horizon:
+                # Time to next failure
+                if machine.failure_rate > 0:
+                    time_to_fail = random.expovariate(machine.failure_rate)
+                else:
+                    break
+                    
+                failure_start = current_time + time_to_fail
+                if failure_start >= simulation_horizon:
+                    break
+                    
+                # Duration of repair
+                repair_time = random.uniform(machine.min_repair_time, machine.max_repair_time)
+                
+                # Add breakdown
+                machine.add_breakdown(failure_start, repair_time)
+                
+                # Update current time
+                current_time = failure_start + repair_time
+    
     def reset_schedule(self) -> None:
         """Reset all scheduling information."""
         # Reset operations in jobs
@@ -128,6 +244,7 @@ class JSSPInstance:
             for op in job.operations:
                 op.start_time = None
                 op.end_time = None
+                op.remaining_time = None
         
         # Reset machines
         for machine in self.machines:
@@ -153,6 +270,14 @@ class JSSPInstance:
                     continue
                 if prev_op.end_time > curr_op.start_time:
                     return False
+                    
+        # Check that operations don't overlap with machine breakdowns
+        for machine in self.machines:
+            for _, op in machine.scheduled_operations:
+                for breakdown_start, breakdown_end in machine.breakdown_times:
+                    # Check if operation overlaps with any breakdown
+                    if (op.start_time < breakdown_end and op.end_time > breakdown_start):
+                        return False
         
         return True
     
@@ -167,7 +292,13 @@ class JSSPInstance:
     
     def total_flow_time(self) -> int:
         """Calculate the total flow time (sum of all job completion times)."""
-        return sum(job.completion_time() or 0 for job in self.jobs)
+        total = 0
+        for job in self.jobs:
+            completion_time = job.completion_time()
+            if completion_time is not None:
+                # Flow time is completion time minus arrival time
+                total += (completion_time - job.arrival_time)
+        return total
     
     def average_flow_time(self) -> float:
         """Calculate the average flow time across all jobs."""
@@ -178,6 +309,9 @@ class JSSPInstance:
         # Create a new instance with the same number of machines
         instance_copy = JSSPInstance(0, len(self.machines))
         
+        # Copy processing time variability
+        instance_copy.processing_time_variability = self.processing_time_variability
+        
         # Clear the automatically created jobs and machines
         instance_copy.jobs = []
         instance_copy.machines = []
@@ -185,6 +319,11 @@ class JSSPInstance:
         # Copy machines
         for machine in self.machines:
             machine_copy = Machine(machine.machine_id)
+            machine_copy.breakdown_times = list(machine.breakdown_times)
+            machine_copy.failure_rate = machine.failure_rate
+            machine_copy.min_repair_time = machine.min_repair_time
+            machine_copy.max_repair_time = machine.max_repair_time
+            machine_copy.available = machine.available
             instance_copy.machines.append(machine_copy)
         
         # Copy jobs and operations
@@ -194,11 +333,14 @@ class JSSPInstance:
             
             # Copy operations
             for op in job.operations:
-                job_copy.add_operation(op.machine_id, op.processing_time)
+                job_copy.add_operation(op.machine_id, op.nominal_processing_time)
+                # Copy the actual processing time with variability
+                job_copy.operations[-1].processing_time = op.processing_time
                 # Copy scheduling information if available
                 if op.is_scheduled():
                     job_copy.operations[-1].start_time = op.start_time
                     job_copy.operations[-1].end_time = op.end_time
+                    job_copy.operations[-1].remaining_time = op.remaining_time
             
             instance_copy.jobs.append(job_copy)
         
@@ -219,8 +361,36 @@ class JSSPInstance:
     @classmethod
     def generate_random_instance(cls, num_jobs: int, num_machines: int, 
                                min_proc_time: int = 1, max_proc_time: int = 10,
-                               seed: Optional[int] = None) -> 'JSSPInstance':
-        """Generate a random JSSP instance."""
+                               seed: Optional[int] = None,
+                               arrival_time_method: str = None,
+                               lambda_arrival: float = 0.1,
+                               max_arrival_window: float = 100,
+                               proc_time_variability: float = 0.0,
+                               machine_failure_rate: float = 0.0,
+                               min_repair_time: float = 5,
+                               max_repair_time: float = 20,
+                               simulation_horizon: int = 1000) -> 'JSSPInstance':
+        """
+        Generate a random JSSP instance.
+        
+        Args:
+            num_jobs: Number of jobs
+            num_machines: Number of machines
+            min_proc_time: Minimum processing time
+            max_proc_time: Maximum processing time
+            seed: Random seed for reproducibility
+            arrival_time_method: Method for generating arrival times ('exponential', 'uniform', or None)
+            lambda_arrival: Parameter for exponential arrival distribution
+            max_arrival_window: Maximum time window for uniform arrival distribution
+            proc_time_variability: Delta for processing time variability (0.0 = no variability)
+            machine_failure_rate: Rate of machine failures per time unit (0.0 = no failures)
+            min_repair_time: Minimum repair time for machines
+            max_repair_time: Maximum repair time for machines
+            simulation_horizon: Time horizon for generating machine breakdowns
+            
+        Returns:
+            A new JSSP instance with the specified parameters
+        """
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
@@ -236,6 +406,27 @@ class JSSPInstance:
                 # Random processing time
                 proc_time = random.randint(min_proc_time, max_proc_time)
                 job.add_operation(machine_id, proc_time)
+        
+        # Set up arrival times if specified
+        if arrival_time_method:
+            instance.generate_job_arrival_times(
+                method=arrival_time_method,
+                lambda_arrival=lambda_arrival,
+                max_arrival_window=max_arrival_window
+            )
+            
+        # Set up processing time variability if specified
+        if proc_time_variability > 0:
+            instance.set_processing_time_variability(proc_time_variability)
+            
+        # Set up machine breakdowns if specified
+        if machine_failure_rate > 0:
+            instance.setup_machine_breakdowns(
+                lambda_fail=machine_failure_rate,
+                min_repair=min_repair_time,
+                max_repair=max_repair_time
+            )
+            instance.generate_machine_breakdowns(simulation_horizon)
         
         return instance
     

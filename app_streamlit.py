@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import time
 import random
+import inspect
 
 from jssp.data import JSSPInstance, Job, Operation
 from jssp.schedulers.simple import FIFOScheduler, SPTScheduler
@@ -57,23 +58,48 @@ def extract_gantt_data(instance, algo_name):
     
     return data
 
-def run_simulation(problem_type, random_params, job_data):
+def run_simulation(problem_type, random_params, job_data, use_uncertainty=False, uncertainty_params=None):
     """Run the simulation with selected parameters."""
     # Create the problem instance
     if problem_type == "Random Problem":
+        # Determine which uncertainty parameters to use
+        arrival_time_method = None
+        lambda_arrival = 0.1
+        max_arrival_window = 100
+        proc_time_variability = 0.0
+        machine_failure_rate = 0.0
+        min_repair_time = 5
+        max_repair_time = 20
+        simulation_horizon = 1000
+        
+        if use_uncertainty and uncertainty_params:
+            if uncertainty_params.get("arrival_time_method") != "None":
+                arrival_time_method = uncertainty_params.get("arrival_time_method").lower()
+                lambda_arrival = uncertainty_params.get("lambda_arrival", 0.1)
+                max_arrival_window = uncertainty_params.get("max_arrival_window", 100)
+                
+            proc_time_variability = uncertainty_params.get("proc_time_variability", 0.0)
+            machine_failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
+            min_repair_time = uncertainty_params.get("min_repair_time", 5)
+            max_repair_time = uncertainty_params.get("max_repair_time", 20)
+            simulation_horizon = random_params["max_proc_time"] * random_params["num_jobs"] * 5  # Estimate
+        
+        # Generate the instance with uncertainty parameters
         instance = JSSPInstance.generate_random_instance(
             random_params["num_jobs"],
             random_params["num_machines"],
             min_proc_time=random_params["min_proc_time"],
             max_proc_time=random_params["max_proc_time"],
-            seed=random_params["seed"]
+            seed=random_params["seed"],
+            arrival_time_method=arrival_time_method,
+            lambda_arrival=lambda_arrival,
+            max_arrival_window=max_arrival_window,
+            proc_time_variability=proc_time_variability,
+            machine_failure_rate=machine_failure_rate,
+            min_repair_time=min_repair_time,
+            max_repair_time=max_repair_time,
+            simulation_horizon=simulation_horizon
         )
-        
-        # Apply delay probabilities to jobs and machines
-        for job in instance.jobs:
-            job.delay_probability = st.session_state['job_delay_prob']
-        for machine in instance.machines:
-            machine.delay_probability = st.session_state['machine_delay_prob']
     else:
         # Group by job ID
         jobs_by_id = {}
@@ -90,22 +116,58 @@ def run_simulation(problem_type, random_params, job_data):
         
         # Create jobs
         for job_id in sorted(jobs_by_id.keys()):
-            job = Job(job_id, delay_probability=st.session_state['job_delay_prob'])
+            job = Job(job_id)
             for machine_id, proc_time in jobs_by_id[job_id]:
                 job.add_operation(machine_id, proc_time)
             instance.add_job(job)
-        
-        # Apply delay probabilities to machines
-        for machine in instance.machines:
-            machine.delay_probability = st.session_state['machine_delay_prob']
+            
+        # Apply uncertainty if needed
+        if use_uncertainty and uncertainty_params:
+            # Set job arrival times
+            if uncertainty_params.get("arrival_time_method") != "None":
+                arrival_method = uncertainty_params.get("arrival_time_method").lower()
+                lambda_arr = uncertainty_params.get("lambda_arrival", 0.1)
+                max_window = uncertainty_params.get("max_arrival_window", 100)
+                instance.generate_job_arrival_times(
+                    method=arrival_method,
+                    lambda_arrival=lambda_arr,
+                    max_arrival_window=max_window
+                )
+                
+            # Set processing time variability
+            proc_variability = uncertainty_params.get("proc_time_variability", 0.0)
+            if proc_variability > 0:
+                instance.set_processing_time_variability(proc_variability)
+                
+            # Set machine breakdowns
+            failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
+            if failure_rate > 0:
+                min_repair = uncertainty_params.get("min_repair_time", 5)
+                max_repair = uncertainty_params.get("max_repair_time", 20)
+                instance.setup_machine_breakdowns(failure_rate, min_repair, max_repair)
+                
+                # Estimate simulation horizon
+                makespan_estimate = sum(job.total_processing_time() for job in instance.jobs)
+                instance.generate_machine_breakdowns(makespan_estimate * 2)
     
     # Run selected algorithms
     results = {}
     selected_algos = st.session_state.get("selected_algos", [])
     
+    # Get uncertainty simulation parameters
+    num_simulations = 1
+    stability_weight = 0.5
+    if use_uncertainty and uncertainty_params:
+        num_simulations = uncertainty_params.get("num_simulations", 5)
+        stability_weight = uncertainty_params.get("stability_weight", 0.5)
+    
     if "FIFO" in selected_algos:
         start_time = time.time()
-        fifo_scheduler = FIFOScheduler()
+        fifo_scheduler = FIFOScheduler(
+            use_uncertainty=use_uncertainty,
+            num_simulations=num_simulations,
+            stability_weight=stability_weight
+        )
         fifo_result = fifo_scheduler.schedule(instance.copy())
         fifo_result["computation_time"] = time.time() - start_time
         fifo_result["gantt_data"] = extract_gantt_data(instance, "FIFO")
@@ -113,7 +175,11 @@ def run_simulation(problem_type, random_params, job_data):
     
     if "SPT" in selected_algos:
         start_time = time.time()
-        spt_scheduler = SPTScheduler()
+        spt_scheduler = SPTScheduler(
+            use_uncertainty=use_uncertainty,
+            num_simulations=num_simulations,
+            stability_weight=stability_weight
+        )
         instance_copy = instance.copy()
         spt_result = spt_scheduler.schedule(instance_copy)
         spt_result["computation_time"] = time.time() - start_time
@@ -122,11 +188,16 @@ def run_simulation(problem_type, random_params, job_data):
     
     if "Genetic Algorithm" in selected_algos:
         start_time = time.time()
+        buffer_mutation_rate = st.session_state.get("buffer_mutation_rate", 0.1) if use_uncertainty else 0.0
         ga_scheduler = GeneticScheduler(
             population_size=st.session_state.get("population_size", 50),
             generations=st.session_state.get("generations", 100),
             crossover_prob=st.session_state.get("crossover_rate", 0.8),
-            mutation_prob=st.session_state.get("mutation_rate", 0.2)
+            mutation_prob=st.session_state.get("mutation_rate", 0.2),
+            buffer_mutation_prob=buffer_mutation_rate,
+            use_uncertainty=use_uncertainty,
+            num_simulations=num_simulations,
+            stability_weight=stability_weight
         )
         instance_copy = instance.copy()
         ga_result = ga_scheduler.schedule(instance_copy)
@@ -329,31 +400,10 @@ def show_info():
     """)
 
 def main():
-    st.title("Job Shop Scheduling Problem Simulator")
-    st.sidebar.header("Simulation Configuration")
+    st.title("Job Shop Scheduling Problem (JSSP) Simulator")
     
-    # Add sliders for delay probabilities
-    job_delay_prob = st.sidebar.slider(
-        "Job Arrival Delay Probability",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.1,
-        step=0.01,
-        help="Probability that a job will be delayed upon arrival."
-    )
-    
-    machine_delay_prob = st.sidebar.slider(
-        "Machine Availability Delay Probability",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.1,
-        step=0.01,
-        help="Probability that a machine will be unavailable when needed."
-    )
-    
-    # Store these probabilities in session state for use in the simulation
-    st.session_state['job_delay_prob'] = job_delay_prob
-    st.session_state['machine_delay_prob'] = machine_delay_prob
+    # Sidebar configuration
+    st.sidebar.title("Problem Configuration")
     
     # Problem type selection
     problem_type = st.sidebar.radio(
@@ -421,6 +471,85 @@ def main():
         selected_algos.append("Genetic Algorithm")
     st.session_state.selected_algos = selected_algos
     
+    # Uncertainty Parameters
+    st.sidebar.title("Uncertainty Configuration")
+    
+    use_uncertainty = st.sidebar.checkbox("Enable Uncertainty", value=False)
+    
+    # Initialize uncertainty parameters
+    uncertainty_params = {}
+    
+    if use_uncertainty:
+        # Job Arrival Times
+        st.sidebar.subheader("Job Arrival Times")
+        arrival_time_method = st.sidebar.selectbox(
+            "Job Arrival Distribution", 
+            ["None", "Uniform", "Exponential"],
+            index=0
+        )
+        
+        uncertainty_params["arrival_time_method"] = arrival_time_method
+        
+        if arrival_time_method != "None":
+            if arrival_time_method == "Exponential":
+                lambda_arrival = st.sidebar.slider(
+                    "λ (arrival rate)", 
+                    0.01, 1.0, 0.1, 0.01,
+                    help="Higher values = more frequent arrivals"
+                )
+                uncertainty_params["lambda_arrival"] = lambda_arrival
+            else:  # Uniform
+                max_arrival_window = st.sidebar.slider(
+                    "Max Arrival Window", 
+                    10, 500, 100, 10,
+                    help="Maximum time for job arrivals"
+                )
+                uncertainty_params["max_arrival_window"] = max_arrival_window
+        
+        # Processing Time Variability
+        st.sidebar.subheader("Processing Time Variability")
+        proc_time_variability = st.sidebar.slider(
+            "Processing Time Variability (±%)", 
+            0, 100, 20, 5
+        ) / 100.0  # Convert to fraction
+        
+        uncertainty_params["proc_time_variability"] = proc_time_variability
+        
+        # Machine Breakdowns
+        st.sidebar.subheader("Machine Breakdowns")
+        machine_failure_rate = st.sidebar.slider(
+            "Machine Failure Rate", 
+            0.0, 0.1, 0.01, 0.001,
+            help="Average failures per time unit"
+        )
+        
+        uncertainty_params["machine_failure_rate"] = machine_failure_rate
+        
+        if machine_failure_rate > 0:
+            min_repair_time = st.sidebar.slider("Min Repair Time", 1, 50, 5)
+            max_repair_time = st.sidebar.slider("Max Repair Time", min_repair_time, 100, min_repair_time + 15)
+            
+            uncertainty_params["min_repair_time"] = min_repair_time
+            uncertainty_params["max_repair_time"] = max_repair_time
+        
+        # Simulation Parameters
+        st.sidebar.subheader("Simulation Parameters")
+        num_simulations = st.sidebar.slider(
+            "Simulation Runs (K)", 
+            1, 20, 5,
+            help="Number of simulations for evaluation"
+        )
+        
+        uncertainty_params["num_simulations"] = num_simulations
+        
+        stability_weight = st.sidebar.slider(
+            "Stability Weight (α)", 
+            0.0, 2.0, 0.5, 0.1,
+            help="Weight of standard deviation in fitness"
+        )
+        
+        uncertainty_params["stability_weight"] = stability_weight
+    
     # Genetic Algorithm parameters
     if ga_selected:
         st.sidebar.subheader("Genetic Algorithm Parameters")
@@ -429,16 +558,31 @@ def main():
         st.session_state.generations = st.sidebar.slider("Generations", 10, 500, 100)
         st.session_state.crossover_rate = st.sidebar.slider("Crossover Rate", 0.1, 1.0, 0.8, 0.1)
         st.session_state.mutation_rate = st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.2, 0.1)
+        
+        if use_uncertainty:
+            st.session_state.buffer_mutation_rate = st.sidebar.slider(
+                "Buffer Mutation Rate", 
+                0.0, 0.5, 0.1, 0.05,
+                help="Probability of inserting delay buffers"
+            )
+            
+            uncertainty_params["buffer_mutation_rate"] = st.session_state.buffer_mutation_rate
     
     # Run simulation button
     if st.sidebar.button("Run Simulation", type="primary", use_container_width=True):
         with st.spinner("Running simulation..."):
-            results = run_simulation(problem_type, random_params, job_data)
+            results = run_simulation(
+                problem_type, 
+                random_params, 
+                job_data, 
+                use_uncertainty, 
+                uncertainty_params
+            )
             st.session_state.results = results
         st.sidebar.success("Simulation completed!")
     
     # Main content area - tabs for results, about, and key terms
-    tab1, tab2, tab3 = st.tabs(["Results", "About JSSP", "Key Terms"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Results", "About JSSP", "Key Terms", "Uncertainty"])
     
     with tab1:
         # Display results if available
@@ -452,6 +596,9 @@ def main():
     
     with tab3:
         show_key_terms()
+        
+    with tab4:
+        show_uncertainty_info()
 
 if __name__ == "__main__":
     main() 
