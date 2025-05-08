@@ -30,6 +30,8 @@ st.set_page_config(
 def extract_gantt_data(instance, algo_name):
     """Extract Gantt chart data from a scheduled instance."""
     data = []
+    breakdown_data = []
+    arrival_data = []
     
     # Colors for different jobs
     colors = [
@@ -41,6 +43,13 @@ def extract_gantt_data(instance, algo_name):
     
     for j, job in enumerate(instance.jobs):
         job_color = colors[j % len(colors)]
+        
+        # Record job arrival data
+        arrival_data.append({
+            'job': f'Job {job.job_id}',
+            'arrival_time': job.arrival_time,
+            'color': job_color
+        })
         
         for i, operation in enumerate(job.operations):
             if not operation.is_scheduled():
@@ -56,7 +65,18 @@ def extract_gantt_data(instance, algo_name):
                 'text': f'J{job.job_id}-Op{i} ({operation.processing_time}t)'
             })
     
-    return data
+    # Extract machine breakdown data
+    for m, machine in enumerate(instance.machines):
+        for start_time, end_time in machine.breakdown_times:
+            breakdown_data.append({
+                'machine': f'Machine {m}',
+                'start': start_time,
+                'end': end_time,
+                'duration': end_time - start_time,
+                'text': f'Breakdown ({end_time - start_time}t)'
+            })
+    
+    return data, breakdown_data, arrival_data
 
 def run_simulation(problem_type, random_params, job_data, use_uncertainty=False, uncertainty_params=None):
     """Run the simulation with selected parameters."""
@@ -170,7 +190,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
         )
         fifo_result = fifo_scheduler.schedule(instance.copy())
         fifo_result["computation_time"] = time.time() - start_time
-        fifo_result["gantt_data"] = extract_gantt_data(instance, "FIFO")
+        fifo_result["gantt_data"], fifo_result["breakdown_data"], fifo_result["arrival_data"] = extract_gantt_data(instance, "FIFO")
         results["FIFO"] = fifo_result
     
     if "SPT" in selected_algos:
@@ -183,7 +203,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
         instance_copy = instance.copy()
         spt_result = spt_scheduler.schedule(instance_copy)
         spt_result["computation_time"] = time.time() - start_time
-        spt_result["gantt_data"] = extract_gantt_data(instance_copy, "SPT")
+        spt_result["gantt_data"], spt_result["breakdown_data"], spt_result["arrival_data"] = extract_gantt_data(instance_copy, "SPT")
         results["SPT"] = spt_result
     
     if "Genetic Algorithm" in selected_algos:
@@ -202,7 +222,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
         instance_copy = instance.copy()
         ga_result = ga_scheduler.schedule(instance_copy)
         ga_result["computation_time"] = time.time() - start_time
-        ga_result["gantt_data"] = extract_gantt_data(instance_copy, "GA")
+        ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
         results["Genetic Algorithm"] = ga_result
     
     return results
@@ -216,15 +236,25 @@ def display_results(results):
     # Create results DataFrame
     results_data = []
     for algo_name, result in results.items():
-        results_data.append({
+        result_entry = {
             'Algorithm': algo_name,
             'Makespan': result["makespan"],
             'Total Flow Time': result["total_flow_time"],
             'Computation Time (s)': f"{result.get('computation_time', 0):.4f}"
-        })
+        }
+        
+        # Add uncertainty metrics if available
+        if "makespan_std" in result:
+            result_entry["Makespan StdDev"] = f"{result['makespan_std']:.2f}"
+            result_entry["Robust Fitness"] = f"{result['robust_fitness']:.2f}"
+        
+        results_data.append(result_entry)
     
     results_df = pd.DataFrame(results_data)
     st.dataframe(results_df, use_container_width=True)
+    
+    # Check if we have uncertainty data to display
+    has_uncertainty_data = any("makespans" in result for result in results.values())
     
     # Display schedules
     st.subheader("Schedules")
@@ -261,6 +291,39 @@ def display_results(results):
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
+            
+            # If we have uncertainty data, show distribution
+            if "makespans" in result:
+                st.subheader(f"Uncertainty Analysis for {algo_name}")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Show makespan distribution
+                    fig = plt.figure(figsize=(10, 6))
+                    plt.hist(result["makespans"], bins=10, alpha=0.7, color='skyblue')
+                    plt.axvline(result["makespan"], color='red', linestyle='dashed', linewidth=2, 
+                               label=f'Mean: {result["makespan"]:.2f}')
+                    plt.title(f"Makespan Distribution (StdDev: {result['makespan_std']:.2f})")
+                    plt.xlabel("Makespan")
+                    plt.ylabel("Frequency")
+                    plt.legend()
+                    plt.grid(alpha=0.3)
+                    st.pyplot(fig)
+                
+                with col2:
+                    # Show flow time distribution
+                    if "flow_times" in result:
+                        fig = plt.figure(figsize=(10, 6))
+                        plt.hist(result["flow_times"], bins=10, alpha=0.7, color='lightgreen')
+                        plt.axvline(result["total_flow_time"], color='red', linestyle='dashed', linewidth=2,
+                                   label=f'Mean: {result["total_flow_time"]:.2f}')
+                        plt.title(f"Flow Time Distribution (StdDev: {result.get('flow_time_std', 0):.2f})")
+                        plt.xlabel("Total Flow Time")
+                        plt.ylabel("Frequency")
+                        plt.legend()
+                        plt.grid(alpha=0.3)
+                        st.pyplot(fig)
     
     # Display comparison charts if multiple algorithms
     if len(results) > 1:
@@ -278,11 +341,75 @@ def display_results(results):
             fig, ax = plot_comparison_metrics(list(results.values()), "total_flow_time")
             st.pyplot(fig)
         
-        # Computation time comparison
-        if "computation_time" in next(iter(results.values())):
+        # If we have uncertainty data, show robustness comparison
+        if has_uncertainty_data:
             col3, col4 = st.columns(2)
             
             with col3:
+                # Create robust fitness comparison
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Extract data for algorithms that have uncertainty metrics
+                algorithms = []
+                robust_fitness = []
+                makespan_values = []
+                std_dev_values = []
+                
+                for algo_name, result in results.items():
+                    if "robust_fitness" in result:
+                        algorithms.append(algo_name)
+                        robust_fitness.append(result["robust_fitness"])
+                        makespan_values.append(result["makespan"])
+                        std_dev_values.append(result["makespan_std"])
+                
+                # Create a grouped bar chart
+                x = np.arange(len(algorithms))
+                width = 0.35
+                
+                bars1 = ax.bar(x - width/2, makespan_values, width, label='Avg Makespan', color='skyblue')
+                bars2 = ax.bar(x + width/2, std_dev_values, width, label='StdDev', color='salmon')
+                
+                ax.set_xlabel('Algorithm')
+                ax.set_ylabel('Value')
+                ax.set_title('Robustness Comparison')
+                ax.set_xticks(x)
+                ax.set_xticklabels(algorithms)
+                ax.legend()
+                
+                # Add value labels
+                for i, bar in enumerate(bars1):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                            f'{makespan_values[i]:.1f}', ha='center', va='bottom')
+                    
+                for i, bar in enumerate(bars2):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                            f'{std_dev_values[i]:.1f}', ha='center', va='bottom')
+                    
+                st.pyplot(fig)
+            
+            with col4:
+                # Create robust fitness comparison (Avg + alpha * StdDev)
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                # Create bar chart for robust fitness
+                bars = ax.bar(algorithms, robust_fitness, color='lightgreen')
+                
+                ax.set_xlabel('Algorithm')
+                ax.set_ylabel('Robust Fitness (lower is better)')
+                ax.set_title('Robust Fitness Comparison')
+                
+                # Add value labels
+                for i, bar in enumerate(bars):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                            f'{robust_fitness[i]:.1f}', ha='center', va='bottom')
+                
+                st.pyplot(fig)
+        
+        # Computation time and GA convergence
+        if "computation_time" in next(iter(results.values())):
+            col5, col6 = st.columns(2)
+            
+            with col5:
                 fig, ax = plt.subplots(figsize=(10, 6))
                 
                 # Extract data
@@ -310,8 +437,8 @@ def display_results(results):
                 
                 st.pyplot(fig)
             
-            # Display GA convergence in the fourth quadrant of the grid
-            with col4:
+            # Display GA convergence
+            with col6:
                 if "Genetic Algorithm" in results and "best_fitness_history" in results["Genetic Algorithm"]:
                     fig, ax = plot_ga_convergence(results["Genetic Algorithm"])
                     st.pyplot(fig)
@@ -331,6 +458,241 @@ def display_results(results):
         st.subheader("Genetic Algorithm Convergence")
         fig, ax = plot_ga_convergence(results["Genetic Algorithm"])
         st.pyplot(fig)
+
+    # Display machine breakdown timeline if available
+    if has_uncertainty_data:
+        st.subheader("Machine Breakdown Analysis")
+        
+        # Find a result with breakdown data
+        result_with_breakdowns = None
+        for algo_name, result in results.items():
+            if "breakdown_data" in result and result["breakdown_data"]:
+                result_with_breakdowns = result
+                algo_with_breakdowns = algo_name
+                break
+        
+        if result_with_breakdowns and "breakdown_data" in result_with_breakdowns:
+            breakdown_data = result_with_breakdowns["breakdown_data"]
+            
+            if breakdown_data:
+                st.write(f"Machine breakdown visualization for {algo_with_breakdowns}:")
+                
+                # Get maximum time for visualization
+                max_time = 0
+                for item in result_with_breakdowns["gantt_data"]:
+                    max_time = max(max_time, item["end"])
+                
+                # Create a breakdown timeline chart using Plotly
+                fig = go.Figure()
+                
+                # Add machine operations first
+                for item in result_with_breakdowns["gantt_data"]:
+                    fig.add_trace(go.Bar(
+                        x=[item["duration"]],
+                        y=[item["machine"]],
+                        orientation="h",
+                        base=item["start"],
+                        marker=dict(color=item["color"]),
+                        name=item["job"],
+                        text=item["text"],
+                        opacity=0.7
+                    ))
+                
+                # Add breakdown overlays
+                for breakdown in breakdown_data:
+                    fig.add_trace(go.Bar(
+                        x=[breakdown["duration"]],
+                        y=[breakdown["machine"]],
+                        orientation="h",
+                        base=breakdown["start"],
+                        marker=dict(color="red", pattern_shape="/"),
+                        name="Breakdown",
+                        text=breakdown["text"],
+                        opacity=0.6
+                    ))
+                
+                fig.update_layout(
+                    title="Schedule with Machine Breakdowns",
+                    xaxis_title="Time",
+                    yaxis_title="Machine",
+                    barmode="overlay",
+                    height=400,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    )
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Show breakdown statistics
+                if breakdown_data:
+                    # Prepare breakdown statistics
+                    breakdown_by_machine = {}
+                    for breakdown in breakdown_data:
+                        machine = breakdown["machine"]
+                        if machine not in breakdown_by_machine:
+                            breakdown_by_machine[machine] = []
+                        breakdown_by_machine[machine].append(breakdown["duration"])
+                    
+                    # Create stats table
+                    stats_data = []
+                    for machine, durations in breakdown_by_machine.items():
+                        stats_data.append({
+                            "Machine": machine,
+                            "Number of Breakdowns": len(durations),
+                            "Total Downtime": sum(durations),
+                            "Average Repair Time": sum(durations) / len(durations) if durations else 0,
+                            "Downtime Percentage": f"{(sum(durations) / max_time * 100):.2f}%"
+                        })
+                    
+                    stats_df = pd.DataFrame(stats_data)
+                    st.dataframe(stats_df, use_container_width=True)
+            else:
+                st.info("No machine breakdowns occurred in this simulation run.")
+        else:
+            st.info("Enable machine breakdowns in the uncertainty settings to see breakdown analysis.")
+
+    # Display job arrival time visualization if available
+    if has_uncertainty_data:
+        st.subheader("Job Arrival Analysis")
+        
+        # Find a result with job arrival data
+        result_with_arrivals = None
+        for algo_name, result in results.items():
+            if "arrival_data" in result and result["arrival_data"]:
+                result_with_arrivals = result
+                algo_with_arrivals = algo_name
+                break
+                
+        if result_with_arrivals and "arrival_data" in result_with_arrivals:
+            arrival_data = result_with_arrivals["arrival_data"]
+            
+            # Check if any jobs have non-zero arrival times
+            has_non_zero_arrivals = any(item["arrival_time"] > 0 for item in arrival_data)
+            
+            if has_non_zero_arrivals:
+                st.write(f"Job arrival time visualization for {algo_with_arrivals}:")
+                
+                # Create a timeline chart for job arrivals
+                arrival_df = pd.DataFrame(arrival_data)
+                arrival_df = arrival_df.sort_values("arrival_time")
+                
+                # Create a bar chart for job arrivals
+                fig = plt.figure(figsize=(10, 6))
+                
+                # Plot job arrivals as a timeline
+                plt.barh(arrival_df["job"], [0.5] * len(arrival_df), left=arrival_df["arrival_time"], 
+                        color=arrival_df["color"], alpha=0.7)
+                
+                # Add markers for the exact arrival times
+                plt.scatter(arrival_df["arrival_time"], arrival_df["job"], marker='o', color='red', s=50, zorder=3)
+                
+                # Add labels for arrival times
+                for i, row in arrival_df.iterrows():
+                    plt.text(row["arrival_time"] + 0.2, row["job"], f"t={row['arrival_time']:.1f}", 
+                            va='center', fontweight='bold')
+                
+                plt.title("Job Arrival Timeline")
+                plt.xlabel("Time")
+                plt.ylabel("Job")
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                
+                st.pyplot(fig)
+                
+                # Plot job waiting time analysis
+                if "gantt_data" in result_with_arrivals:
+                    job_data = {}
+                    
+                    # Group operations by job
+                    for item in result_with_arrivals["gantt_data"]:
+                        job_name = item["job"]
+                        if job_name not in job_data:
+                            job_data[job_name] = {
+                                "operations": [],
+                                "start": float('inf'),
+                                "end": 0
+                            }
+                        job_data[job_name]["operations"].append(item)
+                        job_data[job_name]["start"] = min(job_data[job_name]["start"], item["start"])
+                        job_data[job_name]["end"] = max(job_data[job_name]["end"], item["end"])
+                    
+                    # Calculate waiting times
+                    waiting_data = []
+                    for job_name, job_info in job_data.items():
+                        # Find matching arrival data
+                        arrival_time = 0
+                        for item in arrival_data:
+                            if item["job"] == job_name:
+                                arrival_time = item["arrival_time"]
+                                break
+                        
+                        waiting_time = job_info["start"] - arrival_time
+                        processing_time = job_info["end"] - job_info["start"]
+                        flow_time = job_info["end"] - arrival_time
+                        
+                        waiting_data.append({
+                            "Job": job_name,
+                            "Arrival Time": arrival_time,
+                            "First Operation Start": job_info["start"],
+                            "Last Operation End": job_info["end"],
+                            "Waiting Time": waiting_time,
+                            "Processing Time": processing_time,
+                            "Flow Time": flow_time
+                        })
+                    
+                    # Create a dataframe for analysis
+                    waiting_df = pd.DataFrame(waiting_data)
+                    
+                    # Create a stacked bar chart for time breakdown
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    jobs = waiting_df["Job"]
+                    waiting_times = waiting_df["Waiting Time"]
+                    processing_times = waiting_df["Processing Time"]
+                    
+                    # Plot stacked bars
+                    ax.barh(jobs, waiting_times, color='lightblue', label='Waiting Time')
+                    ax.barh(jobs, processing_times, left=waiting_times, color='lightgreen', label='Processing Time')
+                    
+                    # Add value labels
+                    for i, (wait, proc) in enumerate(zip(waiting_times, processing_times)):
+                        # Add total flow time
+                        total = wait + proc
+                        ax.text(total + 1, i, f"Total: {total:.1f}", va='center')
+                        
+                        # Add waiting and processing times if big enough to fit text
+                        if wait > 5:
+                            ax.text(wait/2, i, f"{wait:.1f}", va='center', ha='center')
+                        if proc > 5:
+                            ax.text(wait + proc/2, i, f"{proc:.1f}", va='center', ha='center')
+                    
+                    ax.set_title("Job Time Breakdown")
+                    ax.set_xlabel("Time")
+                    ax.set_ylabel("Job")
+                    ax.legend(loc='upper right')
+                    ax.grid(True, linestyle='--', alpha=0.7, axis='x')
+                    
+                    st.pyplot(fig)
+                    
+                    # Display statistics table
+                    st.subheader("Job Timing Statistics")
+                    stats_df = waiting_df[["Job", "Arrival Time", "Waiting Time", "Processing Time", "Flow Time"]]
+                    st.dataframe(stats_df, use_container_width=True)
+                    
+                    # Calculate and display averages
+                    avg_wait = waiting_df["Waiting Time"].mean()
+                    avg_flow = waiting_df["Flow Time"].mean()
+                    st.write(f"Average waiting time: {avg_wait:.2f}")
+                    st.write(f"Average flow time: {avg_flow:.2f}")
+            else:
+                st.info("All jobs have arrival time = 0. Enable job arrival time settings to see the analysis.")
+        else:
+            st.info("Enable job arrival times in the uncertainty settings to see arrival time analysis.")
 
 def show_key_terms():
     """Display explanations of key JSSP terms."""
