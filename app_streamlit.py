@@ -281,6 +281,14 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
         std_makespan = np.std(algo_results["makespans"])
         std_flow_time = np.std(algo_results["total_flow_times"])
         
+        # Get stability weight (default to 0.5 if not specified)
+        stability_weight = 0.5
+        if use_uncertainty and uncertainty_params:
+            stability_weight = uncertainty_params.get("stability_weight", 0.5)
+            
+        # Calculate robust fitness
+        robust_fitness = avg_makespan + stability_weight * std_makespan
+        
         # Create the final result entry
         final_results[algo_name] = {
             "makespan": avg_makespan,
@@ -288,6 +296,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
             "computation_time": avg_computation_time,
             "makespan_std": std_makespan,
             "flow_time_std": std_flow_time,
+            "robust_fitness": robust_fitness,  # Add robust fitness calculation
             "gantt_data": first_run_details.get("gantt_data", []),
             "breakdown_data": first_run_details.get("breakdown_data", []),
             "arrival_data": first_run_details.get("arrival_data", []),
@@ -649,7 +658,8 @@ def display_results(results):
         # Add uncertainty metrics if available
         if "makespan_std" in result:
             result_entry["Makespan StdDev"] = f"{result['makespan_std']:.2f}"
-            result_entry["Robust Fitness"] = f"{result['robust_fitness']:.2f}"
+            if "robust_fitness" in result:
+                result_entry["Robust Fitness"] = f"{result['robust_fitness']:.2f}"
         
         results_data.append(result_entry)
     
@@ -762,11 +772,15 @@ def display_results(results):
                     std_dev_values = []
                     
                     for algo_name, result in results.items():
-                        if "robust_fitness" in result:
+                        if "makespan_std" in result:
                             algorithms.append(algo_name)
-                            robust_fitness.append(result["robust_fitness"])
                             makespan_values.append(result["makespan"])
                             std_dev_values.append(result["makespan_std"])
+                            if "robust_fitness" in result:
+                                robust_fitness.append(result["robust_fitness"])
+                            else:
+                                # If robust_fitness is missing, calculate it using the stability weight of 0.5 (default)
+                                robust_fitness.append(result["makespan"] + 0.5 * result["makespan_std"])
                     
                     # Create a grouped bar chart
                     x = np.arange(len(algorithms))
@@ -795,21 +809,24 @@ def display_results(results):
                 
                 with col4:
                     # Create robust fitness comparison (Avg + alpha * StdDev)
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    
-                    # Create bar chart for robust fitness
-                    bars = ax.bar(algorithms, robust_fitness, color='lightgreen')
-                    
-                    ax.set_xlabel('Algorithm')
-                    ax.set_ylabel('Robust Fitness (lower is better)')
-                    ax.set_title('Robust Fitness Comparison')
-                    
-                    # Add value labels
-                    for i, bar in enumerate(bars):
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                                f'{robust_fitness[i]:.1f}', ha='center', va='bottom')
-                    
-                    st.pyplot(fig)
+                    if robust_fitness:  # Check if we have robust fitness values
+                        fig, ax = plt.subplots(figsize=(10, 6))
+                        
+                        # Create bar chart for robust fitness
+                        bars = ax.bar(algorithms, robust_fitness, color='lightgreen')
+                        
+                        ax.set_xlabel('Algorithm')
+                        ax.set_ylabel('Robust Fitness (lower is better)')
+                        ax.set_title('Robust Fitness Comparison')
+                        
+                        # Add value labels
+                        for i, bar in enumerate(bars):
+                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                                    f'{robust_fitness[i]:.1f}', ha='center', va='bottom')
+                        
+                        st.pyplot(fig)
+                    else:
+                        st.info("Robust fitness data not available.")
         
         # Computation time and GA convergence
         with st.expander("Computation Time Analysis"):
