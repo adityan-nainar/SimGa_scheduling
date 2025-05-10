@@ -7,6 +7,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import plotly.express as px
+import plotly.figure_factory as ff
 import time
 import random
 import inspect
@@ -78,154 +80,555 @@ def extract_gantt_data(instance, algo_name):
     
     return data, breakdown_data, arrival_data
 
-def run_simulation(problem_type, random_params, job_data, use_uncertainty=False, uncertainty_params=None):
+def run_simulation(problem_type, random_params, job_data, use_uncertainty=False, uncertainty_params=None, num_runs=1):
     """Run the simulation with selected parameters."""
-    # Create the problem instance
-    if problem_type == "Random Problem":
-        # Determine which uncertainty parameters to use
-        arrival_time_method = None
-        lambda_arrival = 0.1
-        max_arrival_window = 100
-        proc_time_variability = 0.0
-        machine_failure_rate = 0.0
-        min_repair_time = 5
-        max_repair_time = 20
-        simulation_horizon = 1000
-        
-        if use_uncertainty and uncertainty_params:
-            if uncertainty_params.get("arrival_time_method") != "None":
-                arrival_time_method = uncertainty_params.get("arrival_time_method").lower()
-                lambda_arrival = uncertainty_params.get("lambda_arrival", 0.1)
-                max_arrival_window = uncertainty_params.get("max_arrival_window", 100)
-                
-            proc_time_variability = uncertainty_params.get("proc_time_variability", 0.0)
-            machine_failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
-            min_repair_time = uncertainty_params.get("min_repair_time", 5)
-            max_repair_time = uncertainty_params.get("max_repair_time", 20)
-            simulation_horizon = random_params["max_proc_time"] * random_params["num_jobs"] * 5  # Estimate
-        
-        # Generate the instance with uncertainty parameters
-        instance = JSSPInstance.generate_random_instance(
-            random_params["num_jobs"],
-            random_params["num_machines"],
-            min_proc_time=random_params["min_proc_time"],
-            max_proc_time=random_params["max_proc_time"],
-            seed=random_params["seed"],
-            arrival_time_method=arrival_time_method,
-            lambda_arrival=lambda_arrival,
-            max_arrival_window=max_arrival_window,
-            proc_time_variability=proc_time_variability,
-            machine_failure_rate=machine_failure_rate,
-            min_repair_time=min_repair_time,
-            max_repair_time=max_repair_time,
-            simulation_horizon=simulation_horizon
-        )
-    else:
-        # Group by job ID
-        jobs_by_id = {}
-        for job_id, machine_id, proc_time in job_data:
-            if job_id not in jobs_by_id:
-                jobs_by_id[job_id] = []
-            jobs_by_id[job_id].append((machine_id, proc_time))
-        
-        # Determine max machine ID
-        max_machine_id = max(machine_id for _, machine_id, _ in job_data) + 1
-        
-        # Create instance
-        instance = JSSPInstance(0, max_machine_id)
-        
-        # Create jobs
-        for job_id in sorted(jobs_by_id.keys()):
-            job = Job(job_id)
-            for machine_id, proc_time in jobs_by_id[job_id]:
-                job.add_operation(machine_id, proc_time)
-            instance.add_job(job)
-            
-        # Apply uncertainty if needed
-        if use_uncertainty and uncertainty_params:
-            # Set job arrival times
-            if uncertainty_params.get("arrival_time_method") != "None":
-                arrival_method = uncertainty_params.get("arrival_time_method").lower()
-                lambda_arr = uncertainty_params.get("lambda_arrival", 0.1)
-                max_window = uncertainty_params.get("max_arrival_window", 100)
-                instance.generate_job_arrival_times(
-                    method=arrival_method,
-                    lambda_arrival=lambda_arr,
-                    max_arrival_window=max_window
-                )
-                
-            # Set processing time variability
-            proc_variability = uncertainty_params.get("proc_time_variability", 0.0)
-            if proc_variability > 0:
-                instance.set_processing_time_variability(proc_variability)
-                
-            # Set machine breakdowns
-            failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
-            if failure_rate > 0:
-                min_repair = uncertainty_params.get("min_repair_time", 5)
-                max_repair = uncertainty_params.get("max_repair_time", 20)
-                instance.setup_machine_breakdowns(failure_rate, min_repair, max_repair)
-                
-                # Estimate simulation horizon
-                makespan_estimate = sum(job.total_processing_time() for job in instance.jobs)
-                instance.generate_machine_breakdowns(makespan_estimate * 2)
-    
-    # Run selected algorithms
-    results = {}
+    # Store results across multiple runs
+    all_runs_results = {}
     selected_algos = st.session_state.get("selected_algos", [])
     
-    # Get uncertainty simulation parameters
-    num_simulations = 1
-    stability_weight = 0.5
-    if use_uncertainty and uncertainty_params:
-        num_simulations = uncertainty_params.get("num_simulations", 5)
-        stability_weight = uncertainty_params.get("stability_weight", 0.5)
+    # Initialize data structures to collect results across runs
+    for algo in selected_algos:
+        all_runs_results[algo] = {
+            "makespans": [],
+            "total_flow_times": [],
+            "computation_times": []
+        }
     
-    if "FIFO" in selected_algos:
-        start_time = time.time()
-        fifo_scheduler = FIFOScheduler(
-            use_uncertainty=use_uncertainty,
-            num_simulations=num_simulations,
-            stability_weight=stability_weight
-        )
-        fifo_result = fifo_scheduler.schedule(instance.copy())
-        fifo_result["computation_time"] = time.time() - start_time
-        fifo_result["gantt_data"], fifo_result["breakdown_data"], fifo_result["arrival_data"] = extract_gantt_data(instance, "FIFO")
-        results["FIFO"] = fifo_result
+    # Run the simulation multiple times
+    for run in range(num_runs):
+        if num_runs > 1:
+            st.toast(f"Running simulation {run+1}/{num_runs}")
+        
+        # Create the problem instance
+        if problem_type == "Random Problem":
+            # Determine which uncertainty parameters to use
+            arrival_time_method = None
+            lambda_arrival = 0.1
+            max_arrival_window = 100
+            proc_time_variability = 0.0
+            machine_failure_rate = 0.0
+            min_repair_time = 5
+            max_repair_time = 20
+            simulation_horizon = 1000
+            
+            if use_uncertainty and uncertainty_params:
+                if uncertainty_params.get("arrival_time_method") != "None":
+                    arrival_time_method = uncertainty_params.get("arrival_time_method").lower()
+                    lambda_arrival = uncertainty_params.get("lambda_arrival", 0.1)
+                    max_arrival_window = uncertainty_params.get("max_arrival_window", 100)
+                    
+                proc_time_variability = uncertainty_params.get("proc_time_variability", 0.0)
+                machine_failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
+                min_repair_time = uncertainty_params.get("min_repair_time", 5)
+                max_repair_time = uncertainty_params.get("max_repair_time", 20)
+                simulation_horizon = random_params["max_proc_time"] * random_params["num_jobs"] * 5  # Estimate
+            
+            # For multiple runs, use a different seed for each run
+            current_seed = random_params["seed"] + run if num_runs > 1 else random_params["seed"]
+            
+            # Generate the instance with uncertainty parameters
+            instance = JSSPInstance.generate_random_instance(
+                random_params["num_jobs"],
+                random_params["num_machines"],
+                min_proc_time=random_params["min_proc_time"],
+                max_proc_time=random_params["max_proc_time"],
+                seed=current_seed,
+                arrival_time_method=arrival_time_method,
+                lambda_arrival=lambda_arrival,
+                max_arrival_window=max_arrival_window,
+                proc_time_variability=proc_time_variability,
+                machine_failure_rate=machine_failure_rate,
+                min_repair_time=min_repair_time,
+                max_repair_time=max_repair_time,
+                simulation_horizon=simulation_horizon
+            )
+        else:
+            # Group by job ID
+            jobs_by_id = {}
+            for job_id, machine_id, proc_time in job_data:
+                if job_id not in jobs_by_id:
+                    jobs_by_id[job_id] = []
+                jobs_by_id[job_id].append((machine_id, proc_time))
+            
+            # Determine max machine ID
+            max_machine_id = max(machine_id for _, machine_id, _ in job_data) + 1
+            
+            # Create instance
+            instance = JSSPInstance(0, max_machine_id)
+            
+            # Create jobs
+            for job_id in sorted(jobs_by_id.keys()):
+                job = Job(job_id)
+                for machine_id, proc_time in jobs_by_id[job_id]:
+                    job.add_operation(machine_id, proc_time)
+                instance.add_job(job)
+                
+            # Apply uncertainty if needed
+            if use_uncertainty and uncertainty_params:
+                # Set job arrival times
+                if uncertainty_params.get("arrival_time_method") != "None":
+                    arrival_method = uncertainty_params.get("arrival_time_method").lower()
+                    lambda_arr = uncertainty_params.get("lambda_arrival", 0.1)
+                    max_window = uncertainty_params.get("max_arrival_window", 100)
+                    instance.generate_job_arrival_times(
+                        method=arrival_method,
+                        lambda_arrival=lambda_arr,
+                        max_arrival_window=max_window
+                    )
+                    
+                # Set processing time variability
+                proc_variability = uncertainty_params.get("proc_time_variability", 0.0)
+                if proc_variability > 0:
+                    instance.set_processing_time_variability(proc_variability)
+                    
+                # Set machine breakdowns
+                failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
+                if failure_rate > 0:
+                    min_repair = uncertainty_params.get("min_repair_time", 5)
+                    max_repair = uncertainty_params.get("max_repair_time", 20)
+                    instance.setup_machine_breakdowns(failure_rate, min_repair, max_repair)
+                    
+                    # Estimate simulation horizon
+                    makespan_estimate = sum(job.total_processing_time() for job in instance.jobs)
+                    instance.generate_machine_breakdowns(makespan_estimate * 2)
+        
+        # Run selected algorithms
+        results = {}
+        
+        # Get uncertainty simulation parameters
+        uncertainty_sim_runs = 1
+        stability_weight = 0.5
+        if use_uncertainty and uncertainty_params:
+            uncertainty_sim_runs = uncertainty_params.get("num_simulations", 5)
+            stability_weight = uncertainty_params.get("stability_weight", 0.5)
+        
+        if "FIFO" in selected_algos:
+            start_time = time.time()
+            fifo_scheduler = FIFOScheduler(
+                use_uncertainty=use_uncertainty,
+                num_simulations=uncertainty_sim_runs,
+                stability_weight=stability_weight
+            )
+            fifo_result = fifo_scheduler.schedule(instance.copy())
+            fifo_result["computation_time"] = time.time() - start_time
+            fifo_result["gantt_data"], fifo_result["breakdown_data"], fifo_result["arrival_data"] = extract_gantt_data(instance, "FIFO")
+            results["FIFO"] = fifo_result
+            
+            # Store results for this run
+            all_runs_results["FIFO"]["makespans"].append(fifo_result["makespan"])
+            all_runs_results["FIFO"]["total_flow_times"].append(fifo_result["total_flow_time"])
+            all_runs_results["FIFO"]["computation_times"].append(fifo_result["computation_time"])
+        
+        if "SPT" in selected_algos:
+            start_time = time.time()
+            spt_scheduler = SPTScheduler(
+                use_uncertainty=use_uncertainty,
+                num_simulations=uncertainty_sim_runs,
+                stability_weight=stability_weight
+            )
+            instance_copy = instance.copy()
+            spt_result = spt_scheduler.schedule(instance_copy)
+            spt_result["computation_time"] = time.time() - start_time
+            spt_result["gantt_data"], spt_result["breakdown_data"], spt_result["arrival_data"] = extract_gantt_data(instance_copy, "SPT")
+            results["SPT"] = spt_result
+            
+            # Store results for this run
+            all_runs_results["SPT"]["makespans"].append(spt_result["makespan"])
+            all_runs_results["SPT"]["total_flow_times"].append(spt_result["total_flow_time"])
+            all_runs_results["SPT"]["computation_times"].append(spt_result["computation_time"])
+        
+        if "Genetic Algorithm" in selected_algos:
+            start_time = time.time()
+            buffer_mutation_rate = st.session_state.get("buffer_mutation_rate", 0.1) if use_uncertainty else 0.0
+            ga_scheduler = GeneticScheduler(
+                population_size=st.session_state.get("population_size", 50),
+                generations=st.session_state.get("generations", 100),
+                crossover_prob=st.session_state.get("crossover_rate", 0.8),
+                mutation_prob=st.session_state.get("mutation_rate", 0.2),
+                buffer_mutation_prob=buffer_mutation_rate,
+                use_uncertainty=use_uncertainty,
+                num_simulations=uncertainty_sim_runs,
+                stability_weight=stability_weight
+            )
+            instance_copy = instance.copy()
+            ga_result = ga_scheduler.schedule(instance_copy)
+            ga_result["computation_time"] = time.time() - start_time
+            ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
+            results["Genetic Algorithm"] = ga_result
+            
+            # Store results for this run
+            all_runs_results["Genetic Algorithm"]["makespans"].append(ga_result["makespan"])
+            all_runs_results["Genetic Algorithm"]["total_flow_times"].append(ga_result["total_flow_time"])
+            all_runs_results["Genetic Algorithm"]["computation_times"].append(ga_result["computation_time"])
+        
+        # For the first run, store the detailed results for visualization
+        if run == 0:
+            for algo_name, result in results.items():
+                all_runs_results[algo_name]["first_run_details"] = result
     
-    if "SPT" in selected_algos:
-        start_time = time.time()
-        spt_scheduler = SPTScheduler(
-            use_uncertainty=use_uncertainty,
-            num_simulations=num_simulations,
-            stability_weight=stability_weight
-        )
-        instance_copy = instance.copy()
-        spt_result = spt_scheduler.schedule(instance_copy)
-        spt_result["computation_time"] = time.time() - start_time
-        spt_result["gantt_data"], spt_result["breakdown_data"], spt_result["arrival_data"] = extract_gantt_data(instance_copy, "SPT")
-        results["SPT"] = spt_result
+    # Calculate average results across all runs
+    final_results = {}
+    for algo_name, algo_results in all_runs_results.items():
+        # Get the detailed results from the first run for visualization
+        first_run_details = algo_results.get("first_run_details", {})
+        
+        # Calculate averages
+        avg_makespan = np.mean(algo_results["makespans"])
+        avg_flow_time = np.mean(algo_results["total_flow_times"])
+        avg_computation_time = np.mean(algo_results["computation_times"])
+        
+        # Calculate standard deviations
+        std_makespan = np.std(algo_results["makespans"])
+        std_flow_time = np.std(algo_results["total_flow_times"])
+        
+        # Create the final result entry
+        final_results[algo_name] = {
+            "makespan": avg_makespan,
+            "total_flow_time": avg_flow_time,
+            "computation_time": avg_computation_time,
+            "makespan_std": std_makespan,
+            "flow_time_std": std_flow_time,
+            "gantt_data": first_run_details.get("gantt_data", []),
+            "breakdown_data": first_run_details.get("breakdown_data", []),
+            "arrival_data": first_run_details.get("arrival_data", []),
+            "best_fitness_history": first_run_details.get("best_fitness_history", []),
+            "avg_fitness_history": first_run_details.get("avg_fitness_history", []),
+            "algorithm": algo_name,
+            # Store all run data for detailed analysis
+            "all_makespans": algo_results["makespans"],
+            "all_flow_times": algo_results["total_flow_times"],
+            "all_computation_times": algo_results["computation_times"],
+            "num_runs": num_runs
+        }
     
-    if "Genetic Algorithm" in selected_algos:
-        start_time = time.time()
-        buffer_mutation_rate = st.session_state.get("buffer_mutation_rate", 0.1) if use_uncertainty else 0.0
-        ga_scheduler = GeneticScheduler(
-            population_size=st.session_state.get("population_size", 50),
-            generations=st.session_state.get("generations", 100),
-            crossover_prob=st.session_state.get("crossover_rate", 0.8),
-            mutation_prob=st.session_state.get("mutation_rate", 0.2),
-            buffer_mutation_prob=buffer_mutation_rate,
-            use_uncertainty=use_uncertainty,
-            num_simulations=num_simulations,
-            stability_weight=stability_weight
-        )
-        instance_copy = instance.copy()
-        ga_result = ga_scheduler.schedule(instance_copy)
-        ga_result["computation_time"] = time.time() - start_time
-        ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
-        results["Genetic Algorithm"] = ga_result
+    return final_results
+
+def plot_multi_run_analysis(results):
+    """Create plots for analyzing multiple simulation runs."""
+    if not results:
+        return
     
-    return results
+    # Check if we have multiple runs
+    first_algo = list(results.keys())[0]
+    num_runs = results[first_algo].get("num_runs", 1)
+    
+    if num_runs <= 1:
+        st.info("Multiple run analysis is only available when running the simulation more than once.")
+        return
+    
+    st.subheader(f"Multi-Run Analysis ({num_runs} Runs)")
+    
+    # Create tabs for different analysis views
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Makespan Distribution", 
+        "Flow Time Distribution",
+        "Improvement Analysis",
+        "Run Comparison"
+    ])
+    
+    with tab1:
+        # Create makespan distribution plots
+        st.write("### Makespan Distribution Across Runs")
+        
+        # Create a figure with subplots for each algorithm
+        fig, axes = plt.subplots(1, len(results), figsize=(5*len(results), 5))
+        
+        # Handle the case where there's only one algorithm
+        if len(results) == 1:
+            axes = [axes]
+        
+        for i, (algo_name, result) in enumerate(results.items()):
+            makespans = result.get("all_makespans", [])
+            if not makespans:
+                continue
+                
+            # Create histogram
+            axes[i].hist(makespans, bins=min(10, num_runs), alpha=0.7, color='skyblue')
+            axes[i].axvline(result["makespan"], color='red', linestyle='dashed', linewidth=2, 
+                          label=f'Mean: {result["makespan"]:.2f}')
+            axes[i].set_title(f"{algo_name}\nMean: {result['makespan']:.2f}, StdDev: {result['makespan_std']:.2f}")
+            axes[i].set_xlabel("Makespan")
+            axes[i].set_ylabel("Frequency")
+            axes[i].grid(alpha=0.3)
+            axes[i].legend()
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        # Display statistical summary
+        st.write("### Makespan Statistics")
+        
+        stats_data = []
+        for algo_name, result in results.items():
+            makespans = result.get("all_makespans", [])
+            if not makespans:
+                continue
+                
+            stats_data.append({
+                "Algorithm": algo_name,
+                "Min Makespan": np.min(makespans),
+                "Max Makespan": np.max(makespans),
+                "Mean Makespan": result["makespan"],
+                "Median Makespan": np.median(makespans),
+                "StdDev": result["makespan_std"],
+                "CV (%)": (result["makespan_std"] / result["makespan"]) * 100 if result["makespan"] > 0 else 0
+            })
+        
+        if stats_data:
+            st.dataframe(pd.DataFrame(stats_data), use_container_width=True)
+    
+    with tab2:
+        # Create flow time distribution plots
+        st.write("### Flow Time Distribution Across Runs")
+        
+        # Create a figure with subplots for each algorithm
+        fig, axes = plt.subplots(1, len(results), figsize=(5*len(results), 5))
+        
+        # Handle the case where there's only one algorithm
+        if len(results) == 1:
+            axes = [axes]
+        
+        for i, (algo_name, result) in enumerate(results.items()):
+            flow_times = result.get("all_flow_times", [])
+            if not flow_times:
+                continue
+                
+            # Create histogram
+            axes[i].hist(flow_times, bins=min(10, num_runs), alpha=0.7, color='lightgreen')
+            axes[i].axvline(result["total_flow_time"], color='red', linestyle='dashed', linewidth=2, 
+                          label=f'Mean: {result["total_flow_time"]:.2f}')
+            axes[i].set_title(f"{algo_name}\nMean: {result['total_flow_time']:.2f}, StdDev: {result['flow_time_std']:.2f}")
+            axes[i].set_xlabel("Total Flow Time")
+            axes[i].set_ylabel("Frequency")
+            axes[i].grid(alpha=0.3)
+            axes[i].legend()
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        # Display statistical summary
+        st.write("### Flow Time Statistics")
+        
+        stats_data = []
+        for algo_name, result in results.items():
+            flow_times = result.get("all_flow_times", [])
+            if not flow_times:
+                continue
+                
+            stats_data.append({
+                "Algorithm": algo_name,
+                "Min Flow Time": np.min(flow_times),
+                "Max Flow Time": np.max(flow_times),
+                "Mean Flow Time": result["total_flow_time"],
+                "Median Flow Time": np.median(flow_times),
+                "StdDev": result["flow_time_std"],
+                "CV (%)": (result["flow_time_std"] / result["total_flow_time"]) * 100 if result["total_flow_time"] > 0 else 0
+            })
+        
+        if stats_data:
+            st.dataframe(pd.DataFrame(stats_data), use_container_width=True)
+    
+    with tab3:
+        if len(results) > 1:
+            st.write("### Algorithm Improvement Analysis")
+            
+            # Find the baseline algorithm (usually FIFO)
+            baseline_algo = "FIFO" if "FIFO" in results else list(results.keys())[0]
+            baseline_makespan = results[baseline_algo]["makespan"]
+            baseline_flow_time = results[baseline_algo]["total_flow_time"]
+            
+            # Calculate improvements for each algorithm
+            improvement_data = []
+            
+            for algo_name, result in results.items():
+                if algo_name == baseline_algo:
+                    continue
+                    
+                makespan_improvement = ((baseline_makespan - result["makespan"]) / baseline_makespan) * 100
+                flow_time_improvement = ((baseline_flow_time - result["total_flow_time"]) / baseline_flow_time) * 100
+                
+                improvement_data.append({
+                    "Algorithm": algo_name,
+                    "Makespan Improvement (%)": makespan_improvement,
+                    "Flow Time Improvement (%)": flow_time_improvement,
+                    "Baseline": baseline_algo
+                })
+            
+            if improvement_data:
+                # Create improvement bar chart
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                algos = [d["Algorithm"] for d in improvement_data]
+                makespan_improvements = [d["Makespan Improvement (%)"] for d in improvement_data]
+                flow_time_improvements = [d["Flow Time Improvement (%)"] for d in improvement_data]
+                
+                x = np.arange(len(algos))
+                width = 0.35
+                
+                bars1 = ax.bar(x - width/2, makespan_improvements, width, label='Makespan Improvement', color='skyblue')
+                bars2 = ax.bar(x + width/2, flow_time_improvements, width, label='Flow Time Improvement', color='lightgreen')
+                
+                ax.set_xlabel('Algorithm')
+                ax.set_ylabel('Improvement (%)')
+                ax.set_title(f'Performance Improvement Over {baseline_algo}')
+                ax.set_xticks(x)
+                ax.set_xticklabels(algos)
+                ax.legend()
+                ax.grid(True, linestyle='--', alpha=0.7, axis='y')
+                
+                # Add value labels
+                for i, bar in enumerate(bars1):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                            f'{makespan_improvements[i]:.1f}%', ha='center', va='bottom')
+                    
+                for i, bar in enumerate(bars2):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                            f'{flow_time_improvements[i]:.1f}%', ha='center', va='bottom')
+                
+                st.pyplot(fig)
+                
+                # Display improvement statistics
+                st.dataframe(pd.DataFrame(improvement_data), use_container_width=True)
+                
+                # Create run-by-run improvement analysis
+                st.write("### Run-by-Run Improvement Analysis")
+                
+                # Calculate improvements for each run
+                run_improvement_data = []
+                
+                for algo_name, result in results.items():
+                    if algo_name == baseline_algo:
+                        continue
+                        
+                    baseline_makespans = results[baseline_algo].get("all_makespans", [])
+                    algo_makespans = result.get("all_makespans", [])
+                    
+                    if len(baseline_makespans) != len(algo_makespans):
+                        continue
+                        
+                    for i in range(len(baseline_makespans)):
+                        makespan_improvement = ((baseline_makespans[i] - algo_makespans[i]) / baseline_makespans[i]) * 100
+                        
+                        run_improvement_data.append({
+                            "Algorithm": algo_name,
+                            "Run": i + 1,
+                            "Baseline Makespan": baseline_makespans[i],
+                            "Algorithm Makespan": algo_makespans[i],
+                            "Improvement (%)": makespan_improvement
+                        })
+                
+                if run_improvement_data:
+                    # Create a line chart showing improvement by run
+                    df = pd.DataFrame(run_improvement_data)
+                    
+                    fig = px.line(
+                        df, 
+                        x="Run", 
+                        y="Improvement (%)", 
+                        color="Algorithm",
+                        markers=True,
+                        title=f"Makespan Improvement Over {baseline_algo} by Run"
+                    )
+                    
+                    fig.update_layout(
+                        xaxis_title="Run Number",
+                        yaxis_title="Improvement (%)",
+                        legend_title="Algorithm",
+                        hovermode="x unified"
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show distribution of improvements
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    
+                    for algo_name in df["Algorithm"].unique():
+                        algo_data = df[df["Algorithm"] == algo_name]
+                        ax.hist(algo_data["Improvement (%)"], bins=min(10, num_runs), 
+                                alpha=0.6, label=algo_name)
+                    
+                    ax.set_xlabel("Improvement (%)")
+                    ax.set_ylabel("Frequency")
+                    ax.set_title(f"Distribution of Improvements Over {baseline_algo}")
+                    ax.legend()
+                    ax.grid(True, linestyle='--', alpha=0.7)
+                    
+                    st.pyplot(fig)
+            else:
+                st.info(f"No algorithms to compare against {baseline_algo}.")
+        else:
+            st.info("Improvement analysis requires at least two algorithms.")
+    
+    with tab4:
+        st.write("### Run-by-Run Comparison")
+        
+        # Create a line chart showing makespan by run for each algorithm
+        run_data = []
+        
+        for algo_name, result in results.items():
+            makespans = result.get("all_makespans", [])
+            
+            for i, makespan in enumerate(makespans):
+                run_data.append({
+                    "Algorithm": algo_name,
+                    "Run": i + 1,
+                    "Makespan": makespan
+                })
+        
+        if run_data:
+            df = pd.DataFrame(run_data)
+            
+            fig = px.line(
+                df, 
+                x="Run", 
+                y="Makespan", 
+                color="Algorithm",
+                markers=True,
+                title="Makespan by Run"
+            )
+            
+            fig.update_layout(
+                xaxis_title="Run Number",
+                yaxis_title="Makespan",
+                legend_title="Algorithm",
+                hovermode="x unified"
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Create a line chart showing flow time by run for each algorithm
+            run_data = []
+            
+            for algo_name, result in results.items():
+                flow_times = result.get("all_flow_times", [])
+                
+                for i, flow_time in enumerate(flow_times):
+                    run_data.append({
+                        "Algorithm": algo_name,
+                        "Run": i + 1,
+                        "Flow Time": flow_time
+                    })
+            
+            if run_data:
+                df = pd.DataFrame(run_data)
+                
+                fig = px.line(
+                    df, 
+                    x="Run", 
+                    y="Flow Time", 
+                    color="Algorithm",
+                    markers=True,
+                    title="Flow Time by Run"
+                )
+                
+                fig.update_layout(
+                    xaxis_title="Run Number",
+                    yaxis_title="Flow Time",
+                    legend_title="Algorithm",
+                    hovermode="x unified"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
 
 def display_results(results):
     """Display scheduling results."""
@@ -252,6 +655,10 @@ def display_results(results):
     
     results_df = pd.DataFrame(results_data)
     st.dataframe(results_df, use_container_width=True)
+    
+    # Check if we have multi-run data to display
+    first_algo = list(results.keys())[0]
+    has_multi_run_data = results[first_algo].get("num_runs", 1) > 1
     
     # Check if we have uncertainty data to display
     has_uncertainty_data = any("makespans" in result for result in results.values())
@@ -541,6 +948,11 @@ def display_results(results):
                     st.info("All jobs have arrival time = 0. Enable job arrival time settings to see the analysis.")
             else:
                 st.info("Enable job arrival times in the uncertainty settings to see arrival time analysis.")
+    
+    # Add multi-run analysis if we have multiple runs
+    if has_multi_run_data:
+        with st.expander("Multi-Run Analysis", expanded=True):
+            plot_multi_run_analysis(results)
 
 def show_key_terms():
     """Display explanations of key JSSP terms."""
@@ -728,6 +1140,11 @@ def main():
             ])
         random_params = None
     
+    # Multiple runs parameter
+    st.sidebar.subheader("Multiple Runs")
+    num_runs = st.sidebar.slider("Number of Simulation Runs", 1, 30, 1, 
+                               help="Run the simulation multiple times and average the results")
+    
     # Algorithm selection
     st.sidebar.title("Algorithm Configuration")
     
@@ -808,13 +1225,13 @@ def main():
         
         # Simulation Parameters
         st.sidebar.subheader("Simulation Parameters")
-        num_simulations = st.sidebar.slider(
-            "Simulation Runs (K)", 
+        uncertainty_sim_runs = st.sidebar.slider(
+            "Uncertainty Simulations (K)", 
             1, 20, 5,
-            help="Number of simulations for evaluation"
+            help="Number of simulations for uncertainty evaluation"
         )
         
-        uncertainty_params["num_simulations"] = num_simulations
+        uncertainty_params["num_simulations"] = uncertainty_sim_runs
         
         stability_weight = st.sidebar.slider(
             "Stability Weight (α)", 
@@ -844,19 +1261,20 @@ def main():
     
     # Run simulation button
     if st.sidebar.button("Run Simulation", type="primary", use_container_width=True):
-        with st.spinner("Running simulation..."):
+        with st.spinner(f"Running simulation{' (multiple runs)' if num_runs > 1 else ''}..."):
             results = run_simulation(
                 problem_type, 
                 random_params, 
                 job_data, 
                 use_uncertainty, 
-                uncertainty_params
+                uncertainty_params,
+                num_runs
             )
             st.session_state.results = results
-        st.sidebar.success("Simulation completed!")
+        st.sidebar.success(f"Simulation completed ({num_runs} run{'s' if num_runs > 1 else ''})!")
     
     # Main content area - tabs for results, about, and key terms
-    tab1, tab2, tab3, tab4 = st.tabs(["Results", "About JSSP", "Key Terms", "Uncertainty"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Results", "About JSSP", "Key Terms", "Uncertainty", "Multi-Run Analysis"])
     
     with tab1:
         # Display results if available
@@ -873,6 +1291,17 @@ def main():
         
     with tab4:
         show_uncertainty_info()
+    
+    with tab5:
+        if "results" in st.session_state:
+            first_algo = list(st.session_state.results.keys())[0]
+            num_runs = st.session_state.results[first_algo].get("num_runs", 1)
+            if num_runs > 1:
+                plot_multi_run_analysis(st.session_state.results)
+            else:
+                st.info("Multi-run analysis is only available when running the simulation more than once. Set 'Number of Simulation Runs' to a value greater than 1.")
+        else:
+            st.info("Configure parameters in the sidebar and click 'Run Simulation' to see results. Make sure to set 'Number of Simulation Runs' to a value greater than 1 for multi-run analysis.")
 
 if __name__ == "__main__":
     main() 
