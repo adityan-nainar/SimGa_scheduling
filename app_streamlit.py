@@ -546,7 +546,7 @@ def plot_multi_run_analysis(results):
                         hovermode="x unified"
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="improvement_line_chart")
                     
                     # Show distribution of improvements
                     fig, ax = plt.subplots(figsize=(10, 6))
@@ -603,7 +603,7 @@ def plot_multi_run_analysis(results):
                 hovermode="x unified"
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="makespan_run_chart")
             
             # Create a line chart showing flow time by run for each algorithm
             run_data = []
@@ -637,7 +637,7 @@ def plot_multi_run_analysis(results):
                     hovermode="x unified"
                 )
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="flow_time_run_chart")
 
 def display_results(results):
     """Display scheduling results."""
@@ -705,7 +705,7 @@ def display_results(results):
                     height=400,
                 )
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"gantt_{algo_name}")
             
             # If we have uncertainty data, show distribution in an expandable section
             if "makespans" in result:
