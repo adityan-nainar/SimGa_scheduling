@@ -79,13 +79,17 @@ class Machine:
         self.min_repair_time = 0  # Minimum repair time
         self.max_repair_time = 0  # Maximum repair time
     
-    def schedule_operation(self, job: Job, operation: Operation, start_time: int) -> None:
-        """Schedule an operation on this machine."""
-        operation.start_time = start_time
-        operation.end_time = start_time + operation.processing_time
-        self.scheduled_operations.append((job, operation))
-        # Sort operations by start time to maintain timeline
-        self.scheduled_operations.sort(key=lambda x: x[1].start_time)
+    def schedule_operation(self, start: int, end: int, op_id: Tuple[int, int]):
+        """Schedule <op_id> if the window [start,end) is free and breakdown-free."""
+        # 1) overlap check
+        if any(not (end <= s or start >= e) for s, e, _ in self.scheduled_operations):
+            raise ValueError(f"Overlap on machine {self.machine_id} for op {op_id}")
+        # 2) breakdown check
+        if any(b_start < end and start < b_end for b_start, b_end in self.breakdown_times):
+            raise ValueError(f"Breakdown clash on machine {self.machine_id} for op {op_id}")
+        # OK – commit
+        self.scheduled_operations.append((start, end, op_id))
+        self.next_free = max(self.next_free, end)
     
     def set_failure_parameters(self, failure_rate: float, min_repair_time: float, max_repair_time: float) -> None:
         """Set the parameters for machine failures."""
@@ -106,11 +110,25 @@ class Machine:
                 return True
         return False
     
-    def get_earliest_available_time(self) -> int:
-        """Get the earliest time this machine is available for a new operation."""
-        if not self.scheduled_operations:
-            return 0
-        return max(op.end_time for _, op in self.scheduled_operations)
+    def get_earliest_available_time(self, start_from: int = 0) -> int:
+        """
+        First free instant ≥ start_from that is *not* inside a breakdown window
+        and does not overlap any scheduled operation.
+        """
+        t = max(start_from, self.next_free)          # self.next_free is kept by schedule_operation
+        while True:
+            # skip breakdowns that cover t
+            for b_start, b_end in self.breakdown_times:
+                if b_start <= t < b_end:
+                    t = b_end
+                    break
+            else:
+                # ensure no op overlaps (gaps are OK)
+                clash = next(((s, e) for s, e, _ in self.scheduled_operations if s <= t < e), None)
+                if clash:
+                    t = clash[1]                     # jump to end of that op
+                else:
+                    return t
     
     def is_available(self, time: int) -> bool:
         """Check if the machine is available at the given time."""

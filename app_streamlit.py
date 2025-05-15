@@ -29,6 +29,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Check for required API key
+try:
+    api_key = st.secrets["PER_API_KEY"]
+except KeyError:
+    st.sidebar.error("🔑  Add PER_API_KEY to Streamlit secrets.")
+    st.stop()
+
 def extract_gantt_data(instance, algo_name):
     """Extract Gantt chart data from a scheduled instance."""
     data = []
@@ -82,235 +89,254 @@ def extract_gantt_data(instance, algo_name):
 
 def run_simulation(problem_type, random_params, job_data, use_uncertainty=False, uncertainty_params=None, num_runs=1):
     """Run the simulation with selected parameters."""
-    # Store results across multiple runs
-    all_runs_results = {}
-    selected_algos = st.session_state.get("selected_algos", [])
-    
-    # Initialize data structures to collect results across runs
-    for algo in selected_algos:
-        all_runs_results[algo] = {
-            "makespans": [],
-            "total_flow_times": [],
-            "computation_times": []
-        }
-    
-    # Run the simulation multiple times
-    for run in range(num_runs):
-        if num_runs > 1:
-            st.toast(f"Running simulation {run+1}/{num_runs}")
+    try:
+        # Store results across multiple runs
+        all_runs_results = {}
+        selected_algos = st.session_state.get("selected_algos", [])
         
-        # Create the problem instance
-        if problem_type == "Random Problem":
-            # Determine which uncertainty parameters to use
-            arrival_time_method = None
-            lambda_arrival = 0.1
-            max_arrival_window = 100
-            proc_time_variability = 0.0
-            machine_failure_rate = 0.0
-            min_repair_time = 5
-            max_repair_time = 20
-            simulation_horizon = 1000
+        # Initialize data structures to collect results across runs
+        for algo in selected_algos:
+            all_runs_results[algo] = {
+                "makespans": [],
+                "total_flow_times": [],
+                "computation_times": []
+            }
+        
+        # Run the simulation multiple times
+        for run in range(num_runs):
+            if num_runs > 1:
+                st.toast(f"Running simulation {run+1}/{num_runs}")
             
-            if use_uncertainty and uncertainty_params:
-                if uncertainty_params.get("arrival_time_method") != "None":
-                    arrival_time_method = uncertainty_params.get("arrival_time_method").lower()
-                    lambda_arrival = uncertainty_params.get("lambda_arrival", 0.1)
-                    max_arrival_window = uncertainty_params.get("max_arrival_window", 100)
+            try:
+                # Create the problem instance
+                if problem_type == "Random Problem":
+                    # Determine which uncertainty parameters to use
+                    arrival_time_method = None
+                    lambda_arrival = 0.1
+                    max_arrival_window = 100
+                    proc_time_variability = 0.0
+                    machine_failure_rate = 0.0
+                    min_repair_time = 5
+                    max_repair_time = 20
+                    simulation_horizon = 1000
                     
-                proc_time_variability = uncertainty_params.get("proc_time_variability", 0.0)
-                machine_failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
-                min_repair_time = uncertainty_params.get("min_repair_time", 5)
-                max_repair_time = uncertainty_params.get("max_repair_time", 20)
-                simulation_horizon = random_params["max_proc_time"] * random_params["num_jobs"] * 5  # Estimate
-            
-            # For multiple runs, use a different seed for each run
-            current_seed = random_params["seed"] + run if num_runs > 1 else random_params["seed"]
-            
-            # Generate the instance with uncertainty parameters
-            instance = JSSPInstance.generate_random_instance(
-                random_params["num_jobs"],
-                random_params["num_machines"],
-                min_proc_time=random_params["min_proc_time"],
-                max_proc_time=random_params["max_proc_time"],
-                seed=current_seed,
-                arrival_time_method=arrival_time_method,
-                lambda_arrival=lambda_arrival,
-                max_arrival_window=max_arrival_window,
-                proc_time_variability=proc_time_variability,
-                machine_failure_rate=machine_failure_rate,
-                min_repair_time=min_repair_time,
-                max_repair_time=max_repair_time,
-                simulation_horizon=simulation_horizon
-            )
-        else:
-            # Group by job ID
-            jobs_by_id = {}
-            for job_id, machine_id, proc_time in job_data:
-                if job_id not in jobs_by_id:
-                    jobs_by_id[job_id] = []
-                jobs_by_id[job_id].append((machine_id, proc_time))
-            
-            # Determine max machine ID
-            max_machine_id = max(machine_id for _, machine_id, _ in job_data) + 1
-            
-            # Create instance
-            instance = JSSPInstance(0, max_machine_id)
-            
-            # Create jobs
-            for job_id in sorted(jobs_by_id.keys()):
-                job = Job(job_id)
-                for machine_id, proc_time in jobs_by_id[job_id]:
-                    job.add_operation(machine_id, proc_time)
-                instance.add_job(job)
-                
-            # Apply uncertainty if needed
-            if use_uncertainty and uncertainty_params:
-                # Set job arrival times
-                if uncertainty_params.get("arrival_time_method") != "None":
-                    arrival_method = uncertainty_params.get("arrival_time_method").lower()
-                    lambda_arr = uncertainty_params.get("lambda_arrival", 0.1)
-                    max_window = uncertainty_params.get("max_arrival_window", 100)
-                    instance.generate_job_arrival_times(
-                        method=arrival_method,
-                        lambda_arrival=lambda_arr,
-                        max_arrival_window=max_window
+                    if use_uncertainty and uncertainty_params:
+                        if uncertainty_params.get("arrival_time_method") != "None":
+                            arrival_time_method = uncertainty_params.get("arrival_time_method").lower()
+                            lambda_arrival = uncertainty_params.get("lambda_arrival", 0.1)
+                            max_arrival_window = uncertainty_params.get("max_arrival_window", 100)
+                            
+                        proc_time_variability = uncertainty_params.get("proc_time_variability", 0.0)
+                        machine_failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
+                        min_repair_time = uncertainty_params.get("min_repair_time", 5)
+                        max_repair_time = uncertainty_params.get("max_repair_time", 20)
+                        simulation_horizon = random_params["max_proc_time"] * random_params["num_jobs"] * 5  # Estimate
+                    
+                    # For multiple runs, use a different seed for each run
+                    current_seed = random_params["seed"] + run if num_runs > 1 else random_params["seed"]
+                    
+                    # Generate the instance with uncertainty parameters
+                    instance = JSSPInstance.generate_random_instance(
+                        random_params["num_jobs"],
+                        random_params["num_machines"],
+                        min_proc_time=random_params["min_proc_time"],
+                        max_proc_time=random_params["max_proc_time"],
+                        seed=current_seed,
+                        arrival_time_method=arrival_time_method,
+                        lambda_arrival=lambda_arrival,
+                        max_arrival_window=max_arrival_window,
+                        proc_time_variability=proc_time_variability,
+                        machine_failure_rate=machine_failure_rate,
+                        min_repair_time=min_repair_time,
+                        max_repair_time=max_repair_time,
+                        simulation_horizon=simulation_horizon
                     )
+                else:
+                    # Group by job ID
+                    jobs_by_id = {}
+                    for job_id, machine_id, proc_time in job_data:
+                        if job_id not in jobs_by_id:
+                            jobs_by_id[job_id] = []
+                        jobs_by_id[job_id].append((machine_id, proc_time))
                     
-                # Set processing time variability
-                proc_variability = uncertainty_params.get("proc_time_variability", 0.0)
-                if proc_variability > 0:
-                    instance.set_processing_time_variability(proc_variability)
+                    # Determine max machine ID
+                    max_machine_id = max(machine_id for _, machine_id, _ in job_data) + 1
                     
-                # Set machine breakdowns
-                failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
-                if failure_rate > 0:
-                    min_repair = uncertainty_params.get("min_repair_time", 5)
-                    max_repair = uncertainty_params.get("max_repair_time", 20)
-                    instance.setup_machine_breakdowns(failure_rate, min_repair, max_repair)
+                    # Create instance
+                    instance = JSSPInstance(0, max_machine_id)
                     
-                    # Estimate simulation horizon
-                    makespan_estimate = sum(job.total_processing_time() for job in instance.jobs)
-                    instance.generate_machine_breakdowns(makespan_estimate * 2)
+                    # Create jobs
+                    for job_id in sorted(jobs_by_id.keys()):
+                        job = Job(job_id)
+                        for machine_id, proc_time in jobs_by_id[job_id]:
+                            job.add_operation(machine_id, proc_time)
+                        instance.add_job(job)
+                        
+                    # Apply uncertainty if needed
+                    if use_uncertainty and uncertainty_params:
+                        # Set job arrival times
+                        if uncertainty_params.get("arrival_time_method") != "None":
+                            arrival_method = uncertainty_params.get("arrival_time_method").lower()
+                            lambda_arr = uncertainty_params.get("lambda_arrival", 0.1)
+                            max_window = uncertainty_params.get("max_arrival_window", 100)
+                            instance.generate_job_arrival_times(
+                                method=arrival_method,
+                                lambda_arrival=lambda_arr,
+                                max_arrival_window=max_window
+                            )
+                            
+                        # Set processing time variability
+                        proc_variability = uncertainty_params.get("proc_time_variability", 0.0)
+                        if proc_variability > 0:
+                            instance.set_processing_time_variability(proc_variability)
+                            
+                        # Set machine breakdowns
+                        failure_rate = uncertainty_params.get("machine_failure_rate", 0.0)
+                        if failure_rate > 0:
+                            min_repair = uncertainty_params.get("min_repair_time", 5)
+                            max_repair = uncertainty_params.get("max_repair_time", 20)
+                            instance.setup_machine_breakdowns(failure_rate, min_repair, max_repair)
+                            
+                            # Estimate simulation horizon
+                            makespan_estimate = sum(job.total_processing_time() for job in instance.jobs)
+                            instance.generate_machine_breakdowns(makespan_estimate * 2)
+                
+                # Run selected algorithms
+                results = {}
+                
+                # Get uncertainty simulation parameters
+                uncertainty_sim_runs = 1
+                stability_weight = 0.5
+                if use_uncertainty and uncertainty_params:
+                    uncertainty_sim_runs = uncertainty_params.get("num_simulations", 5)
+                    stability_weight = uncertainty_params.get("stability_weight", 0.5)
+                
+                if "FIFO" in selected_algos:
+                    try:
+                        start_time = time.time()
+                        fifo_scheduler = FIFOScheduler(
+                            use_uncertainty=use_uncertainty,
+                            num_simulations=uncertainty_sim_runs,
+                            stability_weight=stability_weight
+                        )
+                        fifo_result = fifo_scheduler.schedule(instance.copy())
+                        fifo_result["computation_time"] = time.time() - start_time
+                        fifo_result["gantt_data"], fifo_result["breakdown_data"], fifo_result["arrival_data"] = extract_gantt_data(instance, "FIFO")
+                        results["FIFO"] = fifo_result
+                        
+                        # Store results for this run
+                        all_runs_results["FIFO"]["makespans"].append(fifo_result["makespan"])
+                        all_runs_results["FIFO"]["total_flow_times"].append(fifo_result["total_flow_time"])
+                        all_runs_results["FIFO"]["computation_times"].append(fifo_result["computation_time"])
+                    except ValueError as e:
+                        st.error(f"Error running FIFO scheduler: {e}")
+                
+                if "SPT" in selected_algos:
+                    try:
+                        start_time = time.time()
+                        spt_scheduler = SPTScheduler(
+                            use_uncertainty=use_uncertainty,
+                            num_simulations=uncertainty_sim_runs,
+                            stability_weight=stability_weight
+                        )
+                        instance_copy = instance.copy()
+                        spt_result = spt_scheduler.schedule(instance_copy)
+                        spt_result["computation_time"] = time.time() - start_time
+                        spt_result["gantt_data"], spt_result["breakdown_data"], spt_result["arrival_data"] = extract_gantt_data(instance_copy, "SPT")
+                        results["SPT"] = spt_result
+                        
+                        # Store results for this run
+                        all_runs_results["SPT"]["makespans"].append(spt_result["makespan"])
+                        all_runs_results["SPT"]["total_flow_times"].append(spt_result["total_flow_time"])
+                        all_runs_results["SPT"]["computation_times"].append(spt_result["computation_time"])
+                    except ValueError as e:
+                        st.error(f"Error running SPT scheduler: {e}")
+                
+                if "Genetic Algorithm" in selected_algos:
+                    try:
+                        start_time = time.time()
+                        buffer_mutation_rate = st.session_state.get("buffer_mutation_rate", 0.1) if use_uncertainty else 0.0
+                        ga_scheduler = GeneticScheduler(
+                            population_size=st.session_state.get("population_size", 50),
+                            generations=st.session_state.get("generations", 100),
+                            crossover_prob=st.session_state.get("crossover_rate", 0.8),
+                            mutation_prob=st.session_state.get("mutation_rate", 0.2),
+                            buffer_mutation_prob=buffer_mutation_rate,
+                            use_uncertainty=use_uncertainty,
+                            num_simulations=uncertainty_sim_runs,
+                            stability_weight=stability_weight
+                        )
+                        instance_copy = instance.copy()
+                        ga_result = ga_scheduler.schedule(instance_copy)
+                        ga_result["computation_time"] = time.time() - start_time
+                        ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
+                        results["Genetic Algorithm"] = ga_result
+                        
+                        # Store results for this run
+                        all_runs_results["Genetic Algorithm"]["makespans"].append(ga_result["makespan"])
+                        all_runs_results["Genetic Algorithm"]["total_flow_times"].append(ga_result["total_flow_time"])
+                        all_runs_results["Genetic Algorithm"]["computation_times"].append(ga_result["computation_time"])
+                    except ValueError as e:
+                        st.error(f"Error running Genetic Algorithm scheduler: {e}")
+                
+                # For the first run, store the detailed results for visualization
+                if run == 0:
+                    for algo_name, result in results.items():
+                        all_runs_results[algo_name]["first_run_details"] = result
+            except Exception as e:
+                st.error(f"❌ Error in simulation run {run+1}: {e}")
         
-        # Run selected algorithms
-        results = {}
-        
-        # Get uncertainty simulation parameters
-        uncertainty_sim_runs = 1
-        stability_weight = 0.5
-        if use_uncertainty and uncertainty_params:
-            uncertainty_sim_runs = uncertainty_params.get("num_simulations", 5)
-            stability_weight = uncertainty_params.get("stability_weight", 0.5)
-        
-        if "FIFO" in selected_algos:
-            start_time = time.time()
-            fifo_scheduler = FIFOScheduler(
-                use_uncertainty=use_uncertainty,
-                num_simulations=uncertainty_sim_runs,
-                stability_weight=stability_weight
-            )
-            fifo_result = fifo_scheduler.schedule(instance.copy())
-            fifo_result["computation_time"] = time.time() - start_time
-            fifo_result["gantt_data"], fifo_result["breakdown_data"], fifo_result["arrival_data"] = extract_gantt_data(instance, "FIFO")
-            results["FIFO"] = fifo_result
+        # Calculate average results across all runs
+        final_results = {}
+        for algo_name, algo_results in all_runs_results.items():
+            if not algo_results["makespans"]:
+                continue  # Skip algorithms that failed in all runs
+                
+            # Get the detailed results from the first run for visualization
+            first_run_details = algo_results.get("first_run_details", {})
             
-            # Store results for this run
-            all_runs_results["FIFO"]["makespans"].append(fifo_result["makespan"])
-            all_runs_results["FIFO"]["total_flow_times"].append(fifo_result["total_flow_time"])
-            all_runs_results["FIFO"]["computation_times"].append(fifo_result["computation_time"])
-        
-        if "SPT" in selected_algos:
-            start_time = time.time()
-            spt_scheduler = SPTScheduler(
-                use_uncertainty=use_uncertainty,
-                num_simulations=uncertainty_sim_runs,
-                stability_weight=stability_weight
-            )
-            instance_copy = instance.copy()
-            spt_result = spt_scheduler.schedule(instance_copy)
-            spt_result["computation_time"] = time.time() - start_time
-            spt_result["gantt_data"], spt_result["breakdown_data"], spt_result["arrival_data"] = extract_gantt_data(instance_copy, "SPT")
-            results["SPT"] = spt_result
+            # Calculate averages
+            avg_makespan = np.mean(algo_results["makespans"])
+            avg_flow_time = np.mean(algo_results["total_flow_times"])
+            avg_computation_time = np.mean(algo_results["computation_times"])
             
-            # Store results for this run
-            all_runs_results["SPT"]["makespans"].append(spt_result["makespan"])
-            all_runs_results["SPT"]["total_flow_times"].append(spt_result["total_flow_time"])
-            all_runs_results["SPT"]["computation_times"].append(spt_result["computation_time"])
-        
-        if "Genetic Algorithm" in selected_algos:
-            start_time = time.time()
-            buffer_mutation_rate = st.session_state.get("buffer_mutation_rate", 0.1) if use_uncertainty else 0.0
-            ga_scheduler = GeneticScheduler(
-                population_size=st.session_state.get("population_size", 50),
-                generations=st.session_state.get("generations", 100),
-                crossover_prob=st.session_state.get("crossover_rate", 0.8),
-                mutation_prob=st.session_state.get("mutation_rate", 0.2),
-                buffer_mutation_prob=buffer_mutation_rate,
-                use_uncertainty=use_uncertainty,
-                num_simulations=uncertainty_sim_runs,
-                stability_weight=stability_weight
-            )
-            instance_copy = instance.copy()
-            ga_result = ga_scheduler.schedule(instance_copy)
-            ga_result["computation_time"] = time.time() - start_time
-            ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
-            results["Genetic Algorithm"] = ga_result
+            # Calculate standard deviations
+            std_makespan = np.std(algo_results["makespans"])
+            std_flow_time = np.std(algo_results["total_flow_times"])
             
-            # Store results for this run
-            all_runs_results["Genetic Algorithm"]["makespans"].append(ga_result["makespan"])
-            all_runs_results["Genetic Algorithm"]["total_flow_times"].append(ga_result["total_flow_time"])
-            all_runs_results["Genetic Algorithm"]["computation_times"].append(ga_result["computation_time"])
-        
-        # For the first run, store the detailed results for visualization
-        if run == 0:
-            for algo_name, result in results.items():
-                all_runs_results[algo_name]["first_run_details"] = result
-    
-    # Calculate average results across all runs
-    final_results = {}
-    for algo_name, algo_results in all_runs_results.items():
-        # Get the detailed results from the first run for visualization
-        first_run_details = algo_results.get("first_run_details", {})
-        
-        # Calculate averages
-        avg_makespan = np.mean(algo_results["makespans"])
-        avg_flow_time = np.mean(algo_results["total_flow_times"])
-        avg_computation_time = np.mean(algo_results["computation_times"])
-        
-        # Calculate standard deviations
-        std_makespan = np.std(algo_results["makespans"])
-        std_flow_time = np.std(algo_results["total_flow_times"])
-        
-        # Get stability weight (default to 0.5 if not specified)
-        stability_weight = 0.5
-        if use_uncertainty and uncertainty_params:
-            stability_weight = uncertainty_params.get("stability_weight", 0.5)
+            # Get stability weight (default to 0.5 if not specified)
+            stability_weight = 0.5
+            if use_uncertainty and uncertainty_params:
+                stability_weight = uncertainty_params.get("stability_weight", 0.5)
+                
+            # Calculate robust fitness
+            robust_fitness = avg_makespan + stability_weight * std_makespan
             
-        # Calculate robust fitness
-        robust_fitness = avg_makespan + stability_weight * std_makespan
+            # Create the final result entry
+            final_results[algo_name] = {
+                "makespan": avg_makespan,
+                "total_flow_time": avg_flow_time,
+                "computation_time": avg_computation_time,
+                "makespan_std": std_makespan,
+                "flow_time_std": std_flow_time,
+                "robust_fitness": robust_fitness,  # Add robust fitness calculation
+                "gantt_data": first_run_details.get("gantt_data", []),
+                "breakdown_data": first_run_details.get("breakdown_data", []),
+                "arrival_data": first_run_details.get("arrival_data", []),
+                "best_fitness_history": first_run_details.get("best_fitness_history", []),
+                "avg_fitness_history": first_run_details.get("avg_fitness_history", []),
+                "algorithm": algo_name,
+                # Store all run data for detailed analysis
+                "all_makespans": algo_results["makespans"],
+                "all_flow_times": algo_results["total_flow_times"],
+                "all_computation_times": algo_results["computation_times"],
+                "num_runs": num_runs
+            }
         
-        # Create the final result entry
-        final_results[algo_name] = {
-            "makespan": avg_makespan,
-            "total_flow_time": avg_flow_time,
-            "computation_time": avg_computation_time,
-            "makespan_std": std_makespan,
-            "flow_time_std": std_flow_time,
-            "robust_fitness": robust_fitness,  # Add robust fitness calculation
-            "gantt_data": first_run_details.get("gantt_data", []),
-            "breakdown_data": first_run_details.get("breakdown_data", []),
-            "arrival_data": first_run_details.get("arrival_data", []),
-            "best_fitness_history": first_run_details.get("best_fitness_history", []),
-            "avg_fitness_history": first_run_details.get("avg_fitness_history", []),
-            "algorithm": algo_name,
-            # Store all run data for detailed analysis
-            "all_makespans": algo_results["makespans"],
-            "all_flow_times": algo_results["total_flow_times"],
-            "all_computation_times": algo_results["computation_times"],
-            "num_runs": num_runs
-        }
-    
-    return final_results
+        return final_results
+    except Exception as e:
+        st.error(f"❌ Simulation failed: {e}")
+        return {}
 
 def plot_multi_run_analysis(results):
     """Create plots for analyzing multiple simulation runs."""
