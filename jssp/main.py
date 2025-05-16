@@ -50,7 +50,13 @@ def run_experiment(
         print(f"  Makespan: {result['makespan']}")
         print(f"  Total flow time: {result['total_flow_time']}")
         print(f"  Valid schedule: {result['is_valid']}")
-        print(f"  Computation time: {result.get('computation_time', 'N/A'):.4f} seconds")
+        
+        # Fixed computation_time formatting
+        comp_time = result.get("computation_time")
+        if comp_time is not None:
+            print(f"  Computation time: {comp_time:.4f} seconds")
+        else:
+            print("  Computation time: N/A")
         
         results[name] = result
         
@@ -68,7 +74,7 @@ def run_experiment(
         
         fig, _ = plot_comparison_metrics(list(results.values()), "total_flow_time")
         fig.savefig(f"{plots_prefix}_flowtime_comparison.png")
-        plt.close(fig)
+        plt.close(fig)  # Added missing plt.close()
         
         # Plot GA convergence if available
         if "GA" in results and "best_fitness_history" in results["GA"]:
@@ -111,9 +117,9 @@ def compare_problem_sizes(
     
     results = {
         "problem_sizes": [],
-        "FIFO": {"makespan": [], "time": []},
-        "SPT": {"makespan": [], "time": []},
-        "GA": {"makespan": [], "time": []}
+        "FIFO": {"makespan": [], "computation_time": []},
+        "SPT": {"makespan": [], "computation_time": []},
+        "GA": {"makespan": [], "computation_time": []}
     }
     
     # Create problem sizes
@@ -131,9 +137,9 @@ def compare_problem_sizes(
             
             # Run multiple times and average
             size_results = {
-                "FIFO": {"makespan": [], "time": []},
-                "SPT": {"makespan": [], "time": []},
-                "GA": {"makespan": [], "time": []}
+                "FIFO": {"makespan": [], "computation_time": []},
+                "SPT": {"makespan": [], "computation_time": []},
+                "GA": {"makespan": [], "computation_time": []}
             }
             
             for run in range(runs_per_size):
@@ -156,15 +162,15 @@ def compare_problem_sizes(
                 for algo in ["FIFO", "SPT", "GA"]:
                     if algo in exp_results:
                         size_results[algo]["makespan"].append(exp_results[algo]["makespan"])
-                        size_results[algo]["time"].append(exp_results[algo].get("computation_time", 0))
+                        size_results[algo]["computation_time"].append(exp_results[algo].get("computation_time", 0))
             
             # Calculate averages
             for algo in ["FIFO", "SPT", "GA"]:
                 avg_makespan = sum(size_results[algo]["makespan"]) / len(size_results[algo]["makespan"])
-                avg_time = sum(size_results[algo]["time"]) / len(size_results[algo]["time"])
+                avg_time = sum(size_results[algo]["computation_time"]) / len(size_results[algo]["computation_time"])
                 
                 results[algo]["makespan"].append(avg_makespan)
-                results[algo]["time"].append(avg_time)
+                results[algo]["computation_time"].append(avg_time)
                 
                 print(f"{algo} - Avg Makespan: {avg_makespan:.2f}, Avg Time: {avg_time:.4f}s")
     
@@ -174,7 +180,8 @@ def compare_problem_sizes(
         plt.savefig("scaling_makespan.png")
         plt.close()
         
-        _plot_scaling_trends(results, "time", "Computation Time Scaling with Problem Size")
+        # Fixed parameter from "time" to "computation_time"
+        _plot_scaling_trends(results, "computation_time", "Computation Time Scaling with Problem Size")
         plt.savefig("scaling_time.png")
         plt.close()
     

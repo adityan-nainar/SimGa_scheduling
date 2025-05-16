@@ -91,13 +91,16 @@ class Chromosome:
         current_job = 0
         current_machine = 0
         
+        current_machine = current_job = None  # before gene loop
+
         # Process operations in the order specified by the gene sequence
         for gene in self.gene_sequence:
             if gene == BUFFER_TOKEN:
-                # Artificial idle time on the *target machine* AND the *job* timeline
+                if current_machine is None:   # skip if at sequence start
+                    continue
                 delay = random.randint(1, 5)
                 machine_cursor[current_machine] += delay
-                job_cursor[current_job] += delay
+                job_cursor[current_job]        += delay
                 continue
 
             job_id, op_idx = gene
@@ -106,20 +109,21 @@ class Chromosome:
             current_machine = machine_id
 
             # Honour job arrival time
-            earliest_start = max(
-                job_cursor[job_id],            # precedence inside job
-                machine_cursor[machine_id],    # machine availability
-                jobs[job_id].arrival_time      # <-- NEW
-            )
+            earliest_start = max(job_cursor[job_id],
+                     machine_cursor[machine_id],
+                     jobs[job_id].arrival_time)   # ← add this constraint
+
             start = earliest_start
             end = start + ptime
-            self.instance.machines[machine_id].schedule_operation(start, end, gene)
+            operation = jobs[job_id].operations[op_idx]
+            self.instance.machines[machine_id].schedule_operation(operation, start)
+
 
             job_cursor[job_id] = end
             machine_cursor[machine_id] = end
         
         # Calculate fitness (makespan - lower is better)
-        makespan = self.instance.compute_makespan()
+        makespan = self.instance.makespan()
         self.fitness = makespan
         
         result = {
@@ -130,6 +134,10 @@ class Chromosome:
             "is_valid": self.instance.is_valid_schedule(),
         }
         
+        if not self.instance.is_valid_schedule():
+            makespan += 10_000            # penalty
+        self.fitness = makespan
+
         self.schedule_result = result
         return result
 
@@ -343,7 +351,8 @@ class GeneticScheduler(Scheduler):
                 if can_emit(gene, emitted):
                     child_sequence.append(gene)
                     emitted.add(gene)
-                    remaining.remove(gene)
+                    if gene in remaining:  # Check if the gene is in remaining before removing
+                        remaining.remove(gene)
                     pos[current_parent] += 1
                     available_op_idx[gene[0]] += 1
                     break
@@ -357,6 +366,18 @@ class GeneticScheduler(Scheduler):
                     emitted.add(gene)
                     remaining.remove(gene)
                     available_op_idx[gene[0]] += 1
+                elif remaining:  # If there are no eligible genes but there are remaining operations
+                    # We need to find a way to make progress - choose any operation where all predecessors are emitted
+                    for j_id in range(len(instance.jobs)):
+                        op_idx = available_op_idx[j_id]
+                        if op_idx < len(instance.jobs[j_id].operations):
+                            gene = (j_id, op_idx)
+                            child_sequence.append(gene)
+                            emitted.add(gene)
+                            if gene in remaining:
+                                remaining.remove(gene)
+                            available_op_idx[j_id] += 1
+                            break
         
         # Create and return the child chromosome
         return Chromosome(instance, child_sequence)
@@ -364,14 +385,13 @@ class GeneticScheduler(Scheduler):
     def _mutate(self, chromosome: Chromosome) -> None:
         """Swap two genes from *different* jobs."""
         candidates = [(i, j) for i in range(len(chromosome.gene_sequence))
-                             for j in range(i + 1, len(chromosome.gene_sequence))
-                             if chromosome.gene_sequence[i] != BUFFER_TOKEN 
-                             and chromosome.gene_sequence[j] != BUFFER_TOKEN
-                             and chromosome.gene_sequence[i][0] != chromosome.gene_sequence[j][0]]
-        if not candidates:
-            return
-        i, j = random.choice(candidates)
-        chromosome.gene_sequence[i], chromosome.gene_sequence[j] = chromosome.gene_sequence[j], chromosome.gene_sequence[i]
+                          for j in range(i + 1, len(chromosome.gene_sequence))
+                          if chromosome.gene_sequence[i] != BUFFER_TOKEN 
+                          and chromosome.gene_sequence[j] != BUFFER_TOKEN
+                          and chromosome.gene_sequence[i][0] != chromosome.gene_sequence[j][0]]
+        if candidates:
+            i, j = random.choice(candidates)
+            chromosome.gene_sequence[i], chromosome.gene_sequence[j] = chromosome.gene_sequence[j], chromosome.gene_sequence[i]
     
     def _buffer_mutation(self, chromosome: Chromosome) -> None:
         """
@@ -386,6 +406,12 @@ class GeneticScheduler(Scheduler):
         # Insert the buffer token
         chromosome.gene_sequence.insert(pos, BUFFER_TOKEN)
     
+
+    BUFFER_END   = "BUFFER_END"
+    MACHINE_DOWN = "MACHINE_DOWN"
+    MACHINE_UP   = "MACHINE_UP"
+
+
     def simulate_schedule(self, instance: JSSPInstance) -> None:
         """
         Simulate a schedule with uncertainty using an event-driven approach.
@@ -401,6 +427,21 @@ class GeneticScheduler(Scheduler):
         # Initialize the event queue (priority queue)
         event_queue = []
         
+        # -------------------------------------------------------------
+        # ➊  push MACHINE_DOWN / MACHINE_UP events for each machine
+        failure_rate = self.failure_rate      # failures per time‑unit
+        repair_time  = self.repair_time       # constant MTTR
+        horizon      = self.horizon           # simulation length or makespan guess
+
+        for m in self.instance.machines:
+            t = np.random.exponential(1 / failure_rate)
+            while t < horizon:
+                heapq.heappush(event_q, Event(t, MACHINE_DOWN, machine=m))
+                heapq.heappush(event_q, Event(t + repair_time, MACHINE_UP, machine=m))
+                t += np.random.exponential(1 / failure_rate)
+        # -------------------------------------------------------------
+
+
         # Track the current status of jobs and machines
         job_next_op = [0] * len(instance.jobs)
         machine_available = [True] * len(instance.machines)
@@ -605,3 +646,23 @@ class GeneticScheduler(Scheduler):
             makespan += 10_000   # simple static penalty; tune as needed
         self.fitness = makespan
         return makespan 
+    
+def precedence_preserving_crossover(p1: 'Chromosome', p2: 'Chromosome') -> 'Chromosome':
+    size, emitted = len(p1.gene_sequence), set()
+    pos1 = pos2 = 0
+    child = []
+    while len(child) < size:
+        for parent, pos in ((p1, pos1), (p2, pos2)):
+            if len(child) == size:
+                break
+            while pos < len(parent.gene_sequence):
+                gene = parent.gene_sequence[pos]; pos += 1
+                # Skip buffer tokens
+                if gene == BUFFER_TOKEN:
+                    continue
+                job, op = gene
+                if all((job, k) in emitted for k in range(op)):
+                    child.append(gene); emitted.add(gene); break
+            if parent is p1: pos1 = pos
+            else:            pos2 = pos
+    return Chromosome(p1.instance, child)
