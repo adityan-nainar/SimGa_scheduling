@@ -127,7 +127,7 @@ class Chromosome:
         self.fitness = makespan
         
         result = {
-            "algorithm": "Genetic Algorithm",
+            "algorithm": "GA",
             "makespan": makespan,
             "total_flow_time": self.instance.total_flow_time(),
             "average_flow_time": self.instance.average_flow_time(),
@@ -327,7 +327,8 @@ class GeneticScheduler(Scheduler):
         
         # Build the child sequence
         parents = [p1_seq, p2_seq]
-        pos = {p1_seq: 0, p2_seq: 0}
+        pos     = {0: 0,    1: 0}
+
         remaining = set(p1_seq)  # All operations that need to be scheduled
         
         while len(child_sequence) < len(p1_seq):

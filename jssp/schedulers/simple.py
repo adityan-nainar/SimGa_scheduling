@@ -3,87 +3,58 @@ Simple scheduling heuristics for Job Shop Scheduling Problems.
 """
 
 import time
-from typing import Dict, List, Any, Tuple
+from typing import Dict, Any, List, Tuple
 
-from jssp.data import JSSPInstance, Job, Operation
+from jssp.data import JSSPInstance, Operation
 from jssp.schedulers import Scheduler
 
 
 class FIFOScheduler(Scheduler):
     """
     First-In-First-Out (FIFO) scheduler.
-    
     Schedules operations in the order they appear in each job's sequence,
     with jobs being prioritized by their order in the instance.
     """
-    
+
     def schedule(self, instance: JSSPInstance) -> Dict[str, Any]:
+        # Measure runtime
         start_time = time.time()
-        
+
         # Reset any existing schedule
         instance.reset_schedule()
-        
-        # Keep track of the current operation index for each job
-        current_op_idx = [0] * len(instance.jobs)
-        
-        # Keep track of the earliest available time for each job
-        job_available_times = [0] * len(instance.jobs)
-        
+
+        num_jobs = len(instance.jobs)
+        current_op_idx = [0] * num_jobs
+        job_available_times = [0.0] * num_jobs
+        machine_available_times = [0.0] * instance.num_machines
+
         # Continue until all operations are scheduled
         while True:
-            # Check if all jobs are completed
-            all_scheduled = True
-            for j, job in enumerate(instance.jobs):
-                if current_op_idx[j] < len(job.operations):
-                    all_scheduled = False
-                    break
-            
-            if all_scheduled:
+            # Select next job with ops remaining
+            selected = [i for i in range(num_jobs) if current_op_idx[i] < len(instance.jobs[i].operations)]
+            if not selected:
                 break
-            
-            # Find the next operation to schedule (FIFO order)
-            selected_job_idx = -1
-            for j, job in enumerate(instance.jobs):
-                # Skip if this job has no more operations to schedule
-                if current_op_idx[j] >= len(job.operations):
-                    continue
-                
-                # Schedule the job that arrived first
-                if selected_job_idx == -1 or job.arrival_time < instance.jobs[selected_job_idx].arrival_time:
-                    selected_job_idx = j
-            
-            if selected_job_idx == -1:
-                break  # No more operations to schedule
-                
-            job = instance.jobs[selected_job_idx]
-            operation = job.operations[current_op_idx[selected_job_idx]]
-            machine = instance.machines[operation.machine_id]
-            
-            # Calculate the earliest start time for this operation
-            # It needs to be after: 
-            # 1. The job's previous operation is complete
-            # 2. The machine becomes available
-            earliest_start_time = max(
-                job_available_times[selected_job_idx],
-                machine.get_earliest_available_time()
-            )
-            
-            # Schedule the operation
-            machine.schedule_operation(job, operation, earliest_start_time)
-            
-            # Update the job's available time
-            job_available_times[selected_job_idx] = operation.end_time
-            
-            # Move to the next operation for this job
-            current_op_idx[selected_job_idx] += 1
-        
+            # FIFO: pick smallest job index (instance order)
+            job_idx = min(selected)
+            op = instance.jobs[job_idx].operations[current_op_idx[job_idx]]
+
+            # Determine start timestamp
+            ready = max(job_available_times[job_idx], machine_available_times[op.machine_id])
+            op.start_time = ready
+            op.end_time = ready + op.processing_time
+            instance.add_scheduled_operation(job_idx, current_op_idx[job_idx], op.start_time)
+
+            # Update availability
+            job_available_times[job_idx] = op.end_time
+            machine_available_times[op.machine_id] = op.end_time
+            current_op_idx[job_idx] += 1
+
         end_time = time.time()
-        
         return {
             "algorithm": "FIFO",
-            "makespan": instance.makespan(),
-            "total_flow_time": instance.total_flow_time(),
-            "average_flow_time": instance.average_flow_time(),
+            "makespan": instance.compute_makespan(),
+            "total_flow_time": instance.compute_total_flow_time(),
+            "average_flow_time": instance.compute_average_flow_time(),
             "computation_time": end_time - start_time,
             "is_valid": instance.is_valid_schedule(),
         }
@@ -92,69 +63,56 @@ class FIFOScheduler(Scheduler):
 class SPTScheduler(Scheduler):
     """
     Shortest Processing Time (SPT) scheduler.
-    
-    Schedules the operation with the shortest processing time among all available operations.
+    Schedules the operation with the shortest processing time among all ready operations.
     """
-    
+
     def schedule(self, instance: JSSPInstance) -> Dict[str, Any]:
+        # Measure runtime
         start_time = time.time()
-        
+
         # Reset any existing schedule
         instance.reset_schedule()
-        
-        # Keep track of the current operation index for each job
-        current_op_idx = [0] * len(instance.jobs)
-        
-        # Keep track of the earliest available time for each job
-        job_available_times = [0] * len(instance.jobs)
-        
-        # Continue until all operations are scheduled
+
+        num_jobs = len(instance.jobs)
+        current_op_idx = [0] * num_jobs
+        job_available_times = [0.0] * num_jobs
+        machine_available_times = [0.0] * instance.num_machines
+
         while True:
-            # Collect all available operations
-            available_operations: List[Tuple[int, Operation]] = []
-            
-            for j, job in enumerate(instance.jobs):
-                # Skip if this job has no more operations to schedule
-                if current_op_idx[j] >= len(job.operations):
-                    continue
-                
-                # The next operation for this job
-                operation = job.operations[current_op_idx[j]]
-                available_operations.append((j, operation))
-            
-            if not available_operations:
-                break  # No more operations to schedule
-            
-            # Sort operations by processing time (SPT rule)
-            available_operations.sort(key=lambda x: x[1].processing_time)
-            
-            # Select the operation with the shortest processing time
-            selected_job_idx, operation = available_operations[0]
-            job = instance.jobs[selected_job_idx]
-            machine = instance.machines[operation.machine_id]
-            
-            # Calculate the earliest start time for this operation
-            earliest_start_time = max(
-                job_available_times[selected_job_idx],
-                machine.get_earliest_available_time()
-            )
-            
-            # Schedule the operation
-            machine.schedule_operation(job, operation, earliest_start_time)
-            
-            # Update the job's available time
-            job_available_times[selected_job_idx] = operation.end_time
-            
-            # Move to the next operation for this job
-            current_op_idx[selected_job_idx] += 1
-        
+            # Identify all currently ready operations
+            ready_ops: List[Tuple[int, Operation]] = []
+            for j in range(num_jobs):
+                if current_op_idx[j] < len(instance.jobs[j].operations):
+                    op = instance.jobs[j].operations[current_op_idx[j]]
+                    if job_available_times[j] <= machine_available_times[op.machine_id]:
+                        ready_ops.append((j, op))
+            if not ready_ops:
+                # Either finished or waiting on resources
+                # Check if all scheduled
+                if all(idx >= len(instance.jobs[j].operations) for j, idx in enumerate(current_op_idx)):
+                    break
+                # Otherwise, advance time to next machine release
+                next_machine_time = min(mt for mt in machine_available_times if mt > min(job_available_times))
+                for j in range(num_jobs): job_available_times[j] = max(job_available_times[j], next_machine_time)
+                continue
+
+            # Pick the ready operation with smallest processing time
+            job_idx, op = min(ready_ops, key=lambda x: x[1].processing_time)
+            start = max(job_available_times[job_idx], machine_available_times[op.machine_id])
+            op.start_time = start
+            op.end_time = start + op.processing_time
+            instance.add_scheduled_operation(job_idx, current_op_idx[job_idx], op.start_time)
+
+            job_available_times[job_idx] = op.end_time
+            machine_available_times[op.machine_id] = op.end_time
+            current_op_idx[job_idx] += 1
+
         end_time = time.time()
-        
         return {
             "algorithm": "SPT",
-            "makespan": instance.makespan(),
-            "total_flow_time": instance.total_flow_time(),
-            "average_flow_time": instance.average_flow_time(),
+            "makespan": instance.compute_makespan(),
+            "total_flow_time": instance.compute_total_flow_time(),
+            "average_flow_time": instance.compute_average_flow_time(),
             "computation_time": end_time - start_time,
             "is_valid": instance.is_valid_schedule(),
-        } 
+        }
