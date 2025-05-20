@@ -335,10 +335,15 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
 def plot_multi_run_analysis(results):
     """Create plots for analyzing multiple simulation runs."""
     if not results:
+        st.info("No results available for multi-run analysis.")
         return
     
     # Check if we have multiple runs
-    first_algo = list(results.keys())[0]
+    first_algo = next(iter(results.keys()), None)
+    if first_algo is None:
+        st.info("No algorithm results available for analysis.")
+        return
+        
     num_runs = results[first_algo].get("num_runs", 1)
     
     if num_runs <= 1:
