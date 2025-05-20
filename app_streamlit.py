@@ -29,12 +29,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Check for required API key
-try:
-    api_key = st.secrets["PER_API_KEY"]
-except KeyError:
-    st.sidebar.error("🔑  Add PER_API_KEY to Streamlit secrets.")
-    st.stop()
 
 def extract_gantt_data(instance, algo_name):
     """Extract Gantt chart data from a scheduled instance."""
