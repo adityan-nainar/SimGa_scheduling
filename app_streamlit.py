@@ -1330,13 +1330,16 @@ def main():
         show_uncertainty_info()
     
     with tab5:
-        if "results" in st.session_state:
-            first_algo = list(st.session_state.results.keys())[0]
-            num_runs = st.session_state.results[first_algo].get("num_runs", 1)
-            if num_runs > 1:
-                plot_multi_run_analysis(st.session_state.results)
+        if "results" in st.session_state and st.session_state.results:
+            first_algo = next(iter(st.session_state.results.keys()), None)
+            if first_algo is not None:
+                num_runs = st.session_state.results[first_algo].get("num_runs", 1)
+                if num_runs > 1:
+                    plot_multi_run_analysis(st.session_state.results)
+                else:
+                    st.info("Multi-run analysis is only available when running the simulation more than once. Set 'Number of Simulation Runs' to a value greater than 1.")
             else:
-                st.info("Multi-run analysis is only available when running the simulation more than once. Set 'Number of Simulation Runs' to a value greater than 1.")
+                st.info("No results available. Configure parameters in the sidebar and click 'Run Simulation'.")
         else:
             st.info("Configure parameters in the sidebar and click 'Run Simulation' to see results. Make sure to set 'Number of Simulation Runs' to a value greater than 1 for multi-run analysis.")
 
