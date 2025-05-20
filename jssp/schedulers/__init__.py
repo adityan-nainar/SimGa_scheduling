@@ -67,6 +67,20 @@ class Scheduler(ABC):
         Returns:
             Dictionary with average makespan, standard deviation, and other metrics
         """
+        # If uncertainty is not enabled, just return the basic metrics
+        if not self.use_uncertainty:
+            makespan = instance.makespan()
+            total_flow_time = instance.total_flow_time()
+            return {
+                "makespan": makespan,
+                "makespan_std": 0,
+                "total_flow_time": total_flow_time,
+                "flow_time_std": 0,
+                "robust_fitness": makespan,  # No penalty when uncertainty is disabled
+                "makespans": [makespan],
+                "flow_times": [total_flow_time]
+            }
+            
         makespans = []
         flow_times = []
         

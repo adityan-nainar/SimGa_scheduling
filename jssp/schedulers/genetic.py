@@ -196,17 +196,32 @@ class GeneticScheduler(Scheduler):
         # Create initial population
         population = self._initialize_population(instance)
         
+        # Fitness cache to avoid recomputing fitness for identical chromosomes
+        fitness_cache = {}
+        
         # Evaluate the initial population
         for chromosome in population:
-            chromosome.decode_and_evaluate()
-            
-            # If using uncertainty, evaluate with multiple simulations
-            if self.use_uncertainty:
-                # We need to copy the instance since evaluate_with_uncertainty will modify it
-                instance_copy = chromosome.instance.copy()
-                uncertainty_results = self.evaluate_with_uncertainty(instance_copy)
-                chromosome.fitness = uncertainty_results["robust_fitness"]
-                chromosome.schedule_result.update(uncertainty_results)
+            # Check if we've evaluated an identical chromosome already
+            gene_tuple = tuple(chromosome.gene_sequence)
+            if gene_tuple in fitness_cache:
+                chromosome.fitness = fitness_cache[gene_tuple]["fitness"]
+                chromosome.schedule_result = fitness_cache[gene_tuple]["result"]
+            else:
+                chromosome.decode_and_evaluate()
+                
+                # If using uncertainty, evaluate with multiple simulations
+                if self.use_uncertainty:
+                    # We need to copy the instance since evaluate_with_uncertainty will modify it
+                    instance_copy = chromosome.instance.copy()
+                    uncertainty_results = self.evaluate_with_uncertainty(instance_copy)
+                    chromosome.fitness = uncertainty_results["robust_fitness"]
+                    chromosome.schedule_result.update(uncertainty_results)
+                
+                # Cache the result
+                fitness_cache[gene_tuple] = {
+                    "fitness": chromosome.fitness,
+                    "result": chromosome.schedule_result
+                }
                 
             # Check if we've exceeded the time limit
             if time.time() > max_end_time:
@@ -262,7 +277,12 @@ class GeneticScheduler(Scheduler):
             
             # Evaluate the new population
             for chromosome in population:
-                if chromosome.fitness == float('inf'):  # Only evaluate if not already evaluated
+                # Check if we've evaluated an identical chromosome already
+                gene_tuple = tuple(chromosome.gene_sequence)
+                if gene_tuple in fitness_cache:
+                    chromosome.fitness = fitness_cache[gene_tuple]["fitness"]
+                    chromosome.schedule_result = fitness_cache[gene_tuple]["result"]
+                elif chromosome.fitness == float('inf'):  # Only evaluate if not already evaluated
                     chromosome.decode_and_evaluate()
                     
                     # If using uncertainty, evaluate with multiple simulations
@@ -271,6 +291,12 @@ class GeneticScheduler(Scheduler):
                         uncertainty_results = self.evaluate_with_uncertainty(instance_copy)
                         chromosome.fitness = uncertainty_results["robust_fitness"]
                         chromosome.schedule_result.update(uncertainty_results)
+                    
+                    # Cache the result
+                    fitness_cache[gene_tuple] = {
+                        "fitness": chromosome.fitness,
+                        "result": chromosome.schedule_result
+                    }
                         
                 # Check if we've exceeded the time limit
                 if time.time() > max_end_time:
@@ -282,6 +308,11 @@ class GeneticScheduler(Scheduler):
             # Record history
             best_fitness_history.append(population[0].fitness)
             avg_fitness_history.append(sum(c.fitness for c in population) / len(population))
+            
+            # Early stopping if no improvement for 5 generations
+            if len(best_fitness_history) > 5 and all(best_fitness_history[-5] == bfh for bfh in best_fitness_history[-5:]):
+                print(f"Early stopping at generation {generation} due to no improvement in the last 5 generations")
+                break
         
         # Return the best solution found
         best_solution = population[0]
@@ -290,15 +321,8 @@ class GeneticScheduler(Scheduler):
         # If using uncertainty, do a final evaluation with more simulations
         if self.use_uncertainty:
             final_instance = instance.copy()
-            for j_idx, op_idx in best_solution.gene_sequence:
-                if j_idx == -1:  # Buffer token
-                    continue
-                job = final_instance.jobs[j_idx]
-                operation = job.operations[op_idx]
-                # Apply the final schedule
-                # (This is a simplified approach - in practice, we'd use the event simulation)
-            
-            final_results = self.evaluate_with_uncertainty(final_instance)
+            # Just evaluate with uncertainty, no need to reconstruct the schedule
+            final_results = self.evaluate_with_uncertainty(best_solution.instance.copy())
             best_solution.schedule_result.update(final_results)
         
         result = best_solution.schedule_result.copy()
@@ -306,7 +330,7 @@ class GeneticScheduler(Scheduler):
             "computation_time": time.time() - start_time,
             "best_fitness_history": best_fitness_history,
             "avg_fitness_history": avg_fitness_history,
-            "generations": self.generations
+            "generations": generation + 1 if generation < self.generations else self.generations
         })
         
         return result
@@ -343,77 +367,80 @@ class GeneticScheduler(Scheduler):
         # Set to track emitted operations
         emitted = set()
         
-        # Function to check if an operation can be emitted
-        def can_emit(gene, emitted_set):
-            job_id, op_idx = gene
-            return op_idx == available_op_idx[job_id] and gene not in emitted_set
+        # Build the child sequence with a maximum iteration limit
+        max_iterations = len(p1_seq) * 3  # Reasonable limit to prevent infinite loops
+        iteration_count = 0
         
-        # Build the child sequence
-        parents = [p1_seq, p2_seq]
-        pos = [0, 0]  # Position in each parent sequence
-
-        # Make sure to use a hashable type (tuple) for set operations
-        remaining = set(p1_seq)  # All operations that need to be scheduled
-        
-        while len(child_sequence) < len(p1_seq):
-            parent_idx = parent_choice[len(child_sequence)] if len(child_sequence) < len(parent_choice) else random.choice([0, 1])
+        while len(child_sequence) < len(p1_seq) and iteration_count < max_iterations:
+            iteration_count += 1
             
-            # Check if this parent has any operations left
-            if pos[parent_idx] >= len(parents[parent_idx]):
-                # This parent is exhausted, switch to the other one
-                parent_idx = 1 - parent_idx
+            # Collect all operations that can be scheduled next (where all predecessors are scheduled)
+            eligible_ops = []
+            for j_id in range(len(instance.jobs)):
+                op_idx = available_op_idx[j_id]
+                if op_idx < len(instance.jobs[j_id].operations):
+                    gene = (j_id, op_idx)
+                    if gene not in emitted:
+                        eligible_ops.append(gene)
             
-            # Check if both parents are exhausted
-            if pos[0] >= len(parents[0]) and pos[1] >= len(parents[1]):
+            if not eligible_ops:
+                # If we've scheduled everything possible but not all operations, 
+                # something is wrong with the precedence constraints
                 break
-                
-            # Try to get a valid operation from current parent
-            parent_tried = 0
-            while parent_tried < 2:  # Try both parents if needed
-                current_idx = (parent_idx + parent_tried) % 2
-                current_parent = parents[current_idx]
-                current_pos = pos[current_idx]
-                
-                if current_pos >= len(current_parent):
-                    parent_tried += 1
-                    continue
-                    
-                gene = current_parent[current_pos]
-                # Ensure gene is a tuple
-                if isinstance(gene, list):
-                    gene = tuple(gene)
-                    
-                if can_emit(gene, emitted):
-                    child_sequence.append(gene)
-                    emitted.add(gene)
-                    if gene in remaining:  # Check if the gene is in remaining before removing
-                        remaining.remove(gene)
-                    pos[current_idx] += 1
-                    available_op_idx[gene[0]] += 1
+            
+            # Use parent preference to choose between eligible operations when possible
+            parent_idx = parent_choice[len(child_sequence) % len(parent_choice)]
+            parents = [p1_seq, p2_seq]
+            
+            # Try to find an operation from the preferred parent that is eligible
+            selected_gene = None
+            for gene in parents[parent_idx]:
+                if gene in eligible_ops:
+                    selected_gene = gene
                     break
-                pos[current_idx] += 1
-                parent_tried += 1
-            else:  # Fallback: dump *any* remaining eligible gene
-                eligible_genes = [g for g in remaining if can_emit(g, emitted)]
-                if eligible_genes:
-                    gene = eligible_genes[0]
-                    child_sequence.append(gene)
-                    emitted.add(gene)
-                    remaining.remove(gene)
-                    available_op_idx[gene[0]] += 1
-                elif remaining:  # If there are no eligible genes but there are remaining operations
-                    # We need to find a way to make progress - choose any operation where all predecessors are emitted
-                    for j_id in range(len(instance.jobs)):
-                        op_idx = available_op_idx[j_id]
-                        if op_idx < len(instance.jobs[j_id].operations):
-                            gene = (j_id, op_idx)
+            
+            # If no eligible operation from preferred parent, try the other parent
+            if selected_gene is None:
+                for gene in parents[1 - parent_idx]:
+                    if gene in eligible_ops:
+                        selected_gene = gene
+                        break
+            
+            # If still no match, just take the first eligible operation
+            if selected_gene is None and eligible_ops:
+                selected_gene = eligible_ops[0]
+            
+            # Add the selected gene to the child sequence
+            if selected_gene is not None:
+                child_sequence.append(selected_gene)
+                emitted.add(selected_gene)
+                job_id, _ = selected_gene
+                available_op_idx[job_id] += 1
+            else:
+                # No eligible operations but we haven't scheduled everything
+                # This is a fail-safe to avoid infinite loops
+                break
+        
+        # If we didn't schedule all operations due to a potential loop,
+        # fall back to a simple topological sort
+        if len(child_sequence) < len(p1_seq):
+            # Reset available operations
+            available_op_idx = [0] * len(instance.jobs)
+            child_sequence = []
+            emitted = set()
+            
+            # Create a topological sort of operations
+            for _ in range(len(p1_seq)):
+                for j_id in range(len(instance.jobs)):
+                    op_idx = available_op_idx[j_id]
+                    if op_idx < len(instance.jobs[j_id].operations):
+                        gene = (j_id, op_idx)
+                        if gene not in emitted:
                             child_sequence.append(gene)
                             emitted.add(gene)
-                            if gene in remaining:
-                                remaining.remove(gene)
                             available_op_idx[j_id] += 1
                             break
-        
+            
         # Create and return the child chromosome
         return Chromosome(instance, child_sequence)
     
@@ -460,6 +487,10 @@ class GeneticScheduler(Scheduler):
             instance: The JSSP instance to simulate
             max_events: Maximum number of events to process (prevents infinite loops)
         """
+        # If uncertainty is disabled, skip simulation entirely
+        if not self.use_uncertainty:
+            return
+            
         # Initialize the event queue (priority queue)
         event_queue = []
         
@@ -470,13 +501,36 @@ class GeneticScheduler(Scheduler):
         
         # Add job arrival events to the queue
         for j, job in enumerate(instance.jobs):
-            heapq.heappush(event_queue, Event(
-                event_type=EventType.JOB_ARRIVAL,
-                time=job.arrival_time,
-                job_id=j
-            ))
+            if job.arrival_time > 0:  # Only add if arrival time is non-zero
+                heapq.heappush(event_queue, Event(
+                    event_type=EventType.JOB_ARRIVAL,
+                    time=job.arrival_time,
+                    job_id=j
+                ))
+            else:
+                # For jobs arriving at time 0, process them directly
+                if job_next_op[j] < len(job.operations):
+                    operation = job.operations[job_next_op[j]]
+                    machine_id = operation.machine_id
+                    if machine_available[machine_id]:
+                        # Schedule this operation
+                        operation.start_time = 0
+                        operation.end_time = operation.processing_time
+                        machine_available[machine_id] = False
+                        
+                        # Add end event
+                        heapq.heappush(event_queue, Event(
+                            event_type=EventType.OPERATION_END,
+                            time=operation.end_time,
+                            job_id=j,
+                            machine_id=machine_id,
+                            operation_id=job_next_op[j]
+                        ))
+                        
+                        # Add to scheduled operations
+                        instance.machines[machine_id].schedule_operation_obj(job, operation)
         
-        # Add machine breakdown events
+        # Add machine breakdown events - only if machine failure rate is greater than 0
         for m, machine in enumerate(instance.machines):
             if machine.failure_rate > 0:
                 # Generate breakdowns using exponential distribution
@@ -485,7 +539,7 @@ class GeneticScheduler(Scheduler):
                 
                 # Limit the number of breakdowns per machine
                 breakdown_count = 0
-                max_breakdowns_per_machine = 10  # Avoid too many breakdowns per machine
+                max_breakdowns_per_machine = 5  # Reduced from 10 to improve performance
                 
                 while t < simulation_horizon and breakdown_count < max_breakdowns_per_machine:
                     # Generate repair time
@@ -505,11 +559,28 @@ class GeneticScheduler(Scheduler):
         
         # Process events until queue is empty or max events reached
         events_processed = 0
+        max_time = float('inf')  # Keep track of the maximum event time
+        
+        # Check if all operations are scheduled initially
+        all_scheduled = all(
+            all(op.is_scheduled() for op in job.operations)
+            for job in instance.jobs
+        )
+        
+        # If everything is already scheduled and no machine failures, we can skip simulation
+        if all_scheduled and not any(machine.failure_rate > 0 for machine in instance.machines):
+            return
+            
         while event_queue and events_processed < max_events:
             event = heapq.heappop(event_queue)
             current_time = event.time
             events_processed += 1
             
+            # Early termination: if the event time exceeds makespan by a large margin,
+            # and we've processed a reasonable number of events, we can stop
+            if current_time > max_time and events_processed > len(instance.jobs) * len(instance.machines) * 2:
+                break
+                
             if event.event_type == EventType.JOB_ARRIVAL:
                 # A job has arrived - try to schedule its first operation
                 job_id = event.job_id
@@ -532,6 +603,9 @@ class GeneticScheduler(Scheduler):
                         
                         # Update machine status
                         machine_available[machine_id] = False
+                        
+                        # Update max_time
+                        max_time = max(max_time, operation.end_time)
                         
                         # Create operation end event
                         heapq.heappush(event_queue, Event(
@@ -573,7 +647,7 @@ class GeneticScheduler(Scheduler):
                             waiting_operations.append((j, job_next_op[j]))
                 
                 # If there are waiting operations, schedule the next one
-                if waiting_operations:
+                if waiting_operations and len(waiting_operations) <= 5:  # Limit checking to 5 operations max for performance
                     # Here we could use different dispatching rules
                     # For now, just take the first one (FIFO)
                     next_job_id, next_op_idx = waiting_operations[0]
@@ -599,7 +673,7 @@ class GeneticScheduler(Scheduler):
                             op.is_scheduled() and 
                             op.start_time <= current_time < op.end_time):
                             
-                            # NEW - Store the current operation to resume later
+                            # Store the current operation to resume later
                             current_op = op
                             current_op.pause(current_time)  # New method to pause and calculate remaining time
                             
@@ -623,7 +697,7 @@ class GeneticScheduler(Scheduler):
                 machine_id = event.machine_id
                 machine_available[machine_id] = True
                 
-                # NEW - Reactivate machine
+                # Reactivate machine
                 instance.machines[machine_id].reactivate(current_time)
                 
                 # Check if there are waiting operations for this machine
@@ -635,7 +709,7 @@ class GeneticScheduler(Scheduler):
                             waiting_operations.append((j, job_next_op[j]))
                 
                 # If there are waiting operations, schedule the next one
-                if waiting_operations:
+                if waiting_operations and len(waiting_operations) <= 5:  # Limit checking to 5 operations max for performance
                     # Create a job arrival event for the first waiting operation
                     next_job_id, _ = waiting_operations[0]
                     heapq.heappush(event_queue, Event(
@@ -648,23 +722,6 @@ class GeneticScheduler(Scheduler):
                 # A buffer period has ended, make the target machine available
                 machine_id = event.machine_id
                 machine_available[machine_id] = True
-                
-                # Check for waiting operations
-                waiting_operations = []
-                for j, job in enumerate(instance.jobs):
-                    if job_next_op[j] < len(job.operations):
-                        next_op = job.operations[job_next_op[j]]
-                        if next_op.machine_id == machine_id:
-                            waiting_operations.append((j, job_next_op[j]))
-                
-                # If there are waiting operations, create an arrival event
-                if waiting_operations:
-                    next_job_id, _ = waiting_operations[0]
-                    heapq.heappush(event_queue, Event(
-                        event_type=EventType.JOB_ARRIVAL,
-                        time=current_time,
-                        job_id=next_job_id
-                    ))
 
     def evaluate(self):
         """Evaluate the chromosome's fitness based on the makespan."""
