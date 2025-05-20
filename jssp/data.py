@@ -29,6 +29,22 @@ class Operation:
         """Check if the operation has been scheduled."""
         return self.start_time is not None and self.end_time is not None
     
+    def pause(self, current_time: float) -> None:
+        """
+        Pause an operation due to machine breakdown.
+        
+        Args:
+            current_time: The time when the operation is paused
+        """
+        if not self.is_scheduled():
+            raise ValueError("Cannot pause an operation that is not scheduled")
+        
+        # Calculate remaining time
+        self.remaining_time = self.end_time - current_time
+        
+        # Update end time to None to indicate it's paused
+        self.end_time = None
+    
     def __repr__(self) -> str:
         status = f"[{self.start_time}-{self.end_time}]" if self.is_scheduled() else "[Not scheduled]"
         return f"Op(m{self.machine_id}, {self.processing_time}t) {status}"
@@ -78,6 +94,7 @@ class Machine:
         self.failure_rate = 0.0  # Failures per time unit
         self.min_repair_time = 0  # Minimum repair time
         self.max_repair_time = 0  # Maximum repair time
+        self.next_free = 0  # Earliest time the machine is free
     
     def schedule_operation(self, start: int, end: int, op_id: Tuple[int, int]):
         """Schedule <op_id> if the window [start,end) is free and breakdown-free."""
@@ -90,6 +107,25 @@ class Machine:
         # OK – commit
         self.scheduled_operations.append((start, end, op_id))
         self.next_free = max(self.next_free, end)
+    
+    def schedule_operation_obj(self, job, operation, start_time=None):
+        """
+        Schedule an operation with a job and operation object.
+        
+        Args:
+            job: The job object
+            operation: The operation object
+            start_time: Start time of the operation (optional)
+        """
+        if start_time is not None:
+            operation.start_time = start_time
+            operation.end_time = start_time + operation.processing_time
+        
+        # Check if the operation has start and end times
+        if not operation.is_scheduled():
+            raise ValueError(f"Operation for job {job.job_id} has no start/end times")
+        
+        self.scheduled_operations.append((job, operation))
     
     def set_failure_parameters(self, failure_rate: float, min_repair_time: float, max_repair_time: float) -> None:
         """Set the parameters for machine failures."""
@@ -142,6 +178,15 @@ class Machine:
                 return False
         return True
     
+    def reactivate(self, time: float) -> None:
+        """
+        Reactivate the machine after a breakdown.
+        
+        Args:
+            time: Current time when the machine is reactivated
+        """
+        self.available = True
+    
     def get_next_available_time(self, time: int) -> int:
         """Get the next time the machine becomes available after the given time."""
         # Get the end times of operations that end after the given time
@@ -165,6 +210,7 @@ class JSSPInstance:
         self.jobs: List[Job] = []
         self.machines: List[Machine] = []
         self.processing_time_variability: float = 0.0  # Delta for processing time variability
+        self.num_machines = num_machines  # Store the number of machines as an attribute
         
         # Initialize machines
         for i in range(num_machines):
@@ -181,6 +227,22 @@ class JSSPInstance:
     def add_machine(self, machine: Machine) -> None:
         """Add a machine to the problem instance."""
         self.machines.append(machine)
+    
+    def add_scheduled_operation(self, job_idx: int, op_idx: int, start_time: float) -> None:
+        """
+        Add the operation to the machine's scheduled operations list.
+        
+        Args:
+            job_idx: Index of the job
+            op_idx: Index of the operation in the job
+            start_time: Start time of the operation
+        """
+        job = self.jobs[job_idx]
+        operation = job.operations[op_idx]
+        machine = self.machines[operation.machine_id]
+        
+        # Add the operation to the machine's scheduled operations list
+        machine.scheduled_operations.append((job, operation))
     
     def set_processing_time_variability(self, delta: float) -> None:
         """Set the processing time variability parameter."""
@@ -329,6 +391,7 @@ class JSSPInstance:
         
         # Copy processing time variability
         instance_copy.processing_time_variability = self.processing_time_variability
+        instance_copy.num_machines = self.num_machines
         
         # Clear the automatically created jobs and machines
         instance_copy.jobs = []

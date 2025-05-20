@@ -116,7 +116,7 @@ class Chromosome:
             start = earliest_start
             end = start + ptime
             operation = jobs[job_id].operations[op_idx]
-            self.instance.machines[machine_id].schedule_operation(operation, start)
+            self.instance.machines[machine_id].schedule_operation_obj(jobs[job_id], operation, start)
 
 
             job_cursor[job_id] = end
@@ -124,6 +124,14 @@ class Chromosome:
         
         # Calculate fitness (makespan - lower is better)
         makespan = self.instance.makespan()
+        
+        # Check if schedule is valid
+        is_valid = self.instance.is_valid_schedule()
+        
+        # Apply penalty for invalid schedules
+        if not is_valid:
+            makespan += 10_000  # penalty
+            
         self.fitness = makespan
         
         result = {
@@ -131,12 +139,8 @@ class Chromosome:
             "makespan": makespan,
             "total_flow_time": self.instance.total_flow_time(),
             "average_flow_time": self.instance.average_flow_time(),
-            "is_valid": self.instance.is_valid_schedule(),
+            "is_valid": is_valid,
         }
-        
-        if not self.instance.is_valid_schedule():
-            makespan += 10_000            # penalty
-        self.fitness = makespan
 
         self.schedule_result = result
         return result
@@ -428,21 +432,6 @@ class GeneticScheduler(Scheduler):
         # Initialize the event queue (priority queue)
         event_queue = []
         
-        # -------------------------------------------------------------
-        # ➊  push MACHINE_DOWN / MACHINE_UP events for each machine
-        failure_rate = self.failure_rate      # failures per time‑unit
-        repair_time  = self.repair_time       # constant MTTR
-        horizon      = self.horizon           # simulation length or makespan guess
-
-        for m in self.instance.machines:
-            t = np.random.exponential(1 / failure_rate)
-            while t < horizon:
-                heapq.heappush(event_q, Event(t, MACHINE_DOWN, machine=m))
-                heapq.heappush(event_q, Event(t + repair_time, MACHINE_UP, machine=m))
-                t += np.random.exponential(1 / failure_rate)
-        # -------------------------------------------------------------
-
-
         # Track the current status of jobs and machines
         job_next_op = [0] * len(instance.jobs)
         machine_available = [True] * len(instance.machines)
@@ -456,12 +445,12 @@ class GeneticScheduler(Scheduler):
                 job_id=j
             ))
         
-        # Add machine breakdown events - NEW automatic failure generation
+        # Add machine breakdown events
         for m, machine in enumerate(instance.machines):
             if machine.failure_rate > 0:
                 # Generate breakdowns using exponential distribution
                 t = random.expovariate(machine.failure_rate)
-                simulation_horizon = 1000  # Should be estimated based on instance size
+                simulation_horizon = instance.makespan() * 2 if instance.makespan() > 0 else 1000  # Estimate based on makespan
                 
                 while t < simulation_horizon:
                     # Generate repair time
@@ -516,7 +505,7 @@ class GeneticScheduler(Scheduler):
                         ))
                         
                         # Add this operation to the machine's scheduled operations
-                        instance.machines[machine_id].schedule_operation(job, operation, start_time)
+                        instance.machines[machine_id].schedule_operation_obj(job, operation, start_time)
             
             elif event.event_type == EventType.OPERATION_END:
                 # An operation has finished
@@ -641,12 +630,12 @@ class GeneticScheduler(Scheduler):
 
     def evaluate(self):
         """Evaluate the chromosome's fitness based on the makespan."""
-        makespan = self.instance.compute_makespan()
+        makespan = self.instance.makespan()
 
         if not self.instance.is_valid_schedule():
             makespan += 10_000   # simple static penalty; tune as needed
         self.fitness = makespan
-        return makespan 
+        return makespan
     
 def precedence_preserving_crossover(p1: 'Chromosome', p2: 'Chromosome') -> 'Chromosome':
     size, emitted = len(p1.gene_sequence), set()

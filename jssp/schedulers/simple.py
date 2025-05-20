@@ -52,9 +52,9 @@ class FIFOScheduler(Scheduler):
         end_time = time.time()
         return {
             "algorithm": "FIFO",
-            "makespan": instance.compute_makespan(),
-            "total_flow_time": instance.compute_total_flow_time(),
-            "average_flow_time": instance.compute_average_flow_time(),
+            "makespan": instance.makespan(),
+            "total_flow_time": instance.total_flow_time(),
+            "average_flow_time": instance.average_flow_time(),
             "computation_time": end_time - start_time,
             "is_valid": instance.is_valid_schedule(),
         }
@@ -110,9 +110,9 @@ class SPTScheduler(Scheduler):
         end_time = time.time()
         return {
             "algorithm": "SPT",
-            "makespan": instance.compute_makespan(),
-            "total_flow_time": instance.compute_total_flow_time(),
-            "average_flow_time": instance.compute_average_flow_time(),
+            "makespan": instance.makespan(),
+            "total_flow_time": instance.total_flow_time(),
+            "average_flow_time": instance.average_flow_time(),
             "computation_time": end_time - start_time,
             "is_valid": instance.is_valid_schedule(),
         }
