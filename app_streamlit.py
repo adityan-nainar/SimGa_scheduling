@@ -88,9 +88,11 @@ def extract_gantt_data(instance, algo_name):
 def run_simulation(problem_type, random_params, job_data, use_uncertainty=False, uncertainty_params=None, num_runs=1):
     """Run the simulation with selected parameters."""
     try:
+        print("Starting run_simulation function")
         # Store results across multiple runs
         all_runs_results = {}
         selected_algos = st.session_state.get("selected_algos", [])
+        print(f"Selected algorithms: {selected_algos}")
         
         # Initialize data structures to collect results across runs
         for algo in selected_algos:
@@ -102,11 +104,13 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
         
         # Run the simulation multiple times
         for run in range(num_runs):
+            print(f"Starting simulation run {run+1}/{num_runs}")
             if num_runs > 1:
                 st.toast(f"Running simulation {run+1}/{num_runs}")
             
             try:
                 # Create the problem instance
+                print(f"Creating problem instance, type: {problem_type}")
                 if problem_type == "Random Problem":
                     # Determine which uncertainty parameters to use
                     arrival_time_method = None
@@ -119,6 +123,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                     simulation_horizon = 1000
                     
                     if use_uncertainty and uncertainty_params:
+                        print("Setting up uncertainty parameters")
                         if uncertainty_params.get("arrival_time_method") != "None":
                             arrival_time_method = uncertainty_params.get("arrival_time_method").lower()
                             lambda_arrival = uncertainty_params.get("lambda_arrival", 0.1)
@@ -134,6 +139,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                     current_seed = random_params["seed"] + run if num_runs > 1 else random_params["seed"]
                     
                     # Generate the instance with uncertainty parameters
+                    print(f"Generating random instance with {random_params['num_jobs']} jobs and {random_params['num_machines']} machines")
                     instance = JSSPInstance.generate_random_instance(
                         random_params["num_jobs"],
                         random_params["num_machines"],
@@ -149,8 +155,10 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         max_repair_time=max_repair_time,
                         simulation_horizon=simulation_horizon
                     )
+                    print("Random instance created successfully")
                 else:
                     # Group by job ID
+                    print("Creating custom problem instance")
                     jobs_by_id = {}
                     for job_id, machine_id, proc_time in job_data:
                         if job_id not in jobs_by_id:
@@ -169,9 +177,12 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         for machine_id, proc_time in jobs_by_id[job_id]:
                             job.add_operation(machine_id, proc_time)
                         instance.add_job(job)
+                    
+                    print("Custom instance created successfully")
                         
                     # Apply uncertainty if needed
                     if use_uncertainty and uncertainty_params:
+                        print("Adding uncertainty to custom instance")
                         # Set job arrival times
                         if uncertainty_params.get("arrival_time_method") != "None":
                             arrival_method = uncertainty_params.get("arrival_time_method").lower()
@@ -200,6 +211,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                             instance.generate_machine_breakdowns(makespan_estimate * 2)
                 
                 # Run selected algorithms
+                print(f"Starting to run selected algorithms: {selected_algos}")
                 results = {}
                 
                 # Get uncertainty simulation parameters
@@ -211,6 +223,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                 
                 if "FIFO" in selected_algos:
                     try:
+                        print("Running FIFO scheduler")
                         start_time = time.time()
                         fifo_scheduler = FIFOScheduler(
                             use_uncertainty=use_uncertainty,
@@ -219,6 +232,8 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         )
                         fifo_result = fifo_scheduler.schedule(instance.copy())
                         fifo_result["computation_time"] = time.time() - start_time
+                        print(f"FIFO scheduler completed in {fifo_result['computation_time']:.4f} seconds")
+                        print("Extracting FIFO Gantt data")
                         fifo_result["gantt_data"], fifo_result["breakdown_data"], fifo_result["arrival_data"] = extract_gantt_data(instance, "FIFO")
                         results["FIFO"] = fifo_result
                         
@@ -226,11 +241,14 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         all_runs_results["FIFO"]["makespans"].append(fifo_result["makespan"])
                         all_runs_results["FIFO"]["total_flow_times"].append(fifo_result["total_flow_time"])
                         all_runs_results["FIFO"]["computation_times"].append(fifo_result["computation_time"])
+                        print("FIFO results stored successfully")
                     except ValueError as e:
                         st.error(f"Error running FIFO scheduler: {e}")
+                        print(f"FIFO scheduler error: {e}")
                 
                 if "SPT" in selected_algos:
                     try:
+                        print("Running SPT scheduler")
                         start_time = time.time()
                         spt_scheduler = SPTScheduler(
                             use_uncertainty=use_uncertainty,
@@ -240,6 +258,8 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         instance_copy = instance.copy()
                         spt_result = spt_scheduler.schedule(instance_copy)
                         spt_result["computation_time"] = time.time() - start_time
+                        print(f"SPT scheduler completed in {spt_result['computation_time']:.4f} seconds")
+                        print("Extracting SPT Gantt data")
                         spt_result["gantt_data"], spt_result["breakdown_data"], spt_result["arrival_data"] = extract_gantt_data(instance_copy, "SPT")
                         results["SPT"] = spt_result
                         
@@ -247,13 +267,17 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         all_runs_results["SPT"]["makespans"].append(spt_result["makespan"])
                         all_runs_results["SPT"]["total_flow_times"].append(spt_result["total_flow_time"])
                         all_runs_results["SPT"]["computation_times"].append(spt_result["computation_time"])
+                        print("SPT results stored successfully")
                     except ValueError as e:
                         st.error(f"Error running SPT scheduler: {e}")
+                        print(f"SPT scheduler error: {e}")
                 
                 if "Genetic Algorithm" in selected_algos:
                     try:
+                        print("Running Genetic Algorithm scheduler")
                         start_time = time.time()
                         buffer_mutation_rate = st.session_state.get("buffer_mutation_rate", 0.1) if use_uncertainty else 0.0
+                        print(f"GA parameters: pop_size={st.session_state.get('population_size', 50)}, generations={st.session_state.get('generations', 100)}")
                         ga_scheduler = GeneticScheduler(
                             population_size=st.session_state.get("population_size", 50),
                             generations=st.session_state.get("generations", 100),
@@ -264,9 +288,13 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                             num_simulations=uncertainty_sim_runs,
                             stability_weight=stability_weight
                         )
+                        print("Genetic Algorithm scheduler initialized")
                         instance_copy = instance.copy()
+                        print("Starting GA scheduler.schedule() method...")
                         ga_result = ga_scheduler.schedule(instance_copy, max_time_seconds=120)
                         ga_result["computation_time"] = time.time() - start_time
+                        print(f"GA scheduler completed in {ga_result['computation_time']:.4f} seconds")
+                        print("Extracting GA Gantt data")
                         ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
                         results["Genetic Algorithm"] = ga_result
                         
@@ -274,17 +302,25 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                         all_runs_results["Genetic Algorithm"]["makespans"].append(ga_result["makespan"])
                         all_runs_results["Genetic Algorithm"]["total_flow_times"].append(ga_result["total_flow_time"])
                         all_runs_results["Genetic Algorithm"]["computation_times"].append(ga_result["computation_time"])
+                        print("GA results stored successfully")
                     except ValueError as e:
                         st.error(f"Error running Genetic Algorithm scheduler: {e}")
+                        print(f"Genetic Algorithm scheduler error: {e}")
+                    except Exception as e:
+                        st.error(f"Unexpected error in Genetic Algorithm: {e}")
+                        print(f"Unexpected error in Genetic Algorithm: {type(e).__name__}: {e}")
                 
                 # For the first run, store the detailed results for visualization
                 if run == 0:
                     for algo_name, result in results.items():
                         all_runs_results[algo_name]["first_run_details"] = result
+                print(f"Simulation run {run+1}/{num_runs} completed")
             except Exception as e:
                 st.error(f"❌ Error in simulation run {run+1}: {e}")
+                print(f"Error in simulation run {run+1}: {type(e).__name__}: {e}")
         
         # Calculate average results across all runs
+        print("Calculating final results across all runs")
         final_results = {}
         for algo_name, algo_results in all_runs_results.items():
             if not algo_results["makespans"]:
@@ -331,9 +367,13 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                 "num_runs": num_runs
             }
         
+        print("All simulations completed successfully")
         return final_results
     except Exception as e:
         st.error(f"❌ Simulation failed: {e}")
+        print(f"Main simulation function failed: {type(e).__name__}: {e}")
+        import traceback
+        print(traceback.format_exc())
         return {}
 
 def plot_multi_run_analysis(results):
@@ -1132,6 +1172,7 @@ def show_uncertainty_info():
     """)
 
 def main():
+    print("Starting main function")
     st.title("Job Shop Scheduling Problem (JSSP) Simulator")
     
     # Sidebar configuration
@@ -1143,6 +1184,7 @@ def main():
         ["Random Problem", "Custom Problem"],
         horizontal=False
     )
+    print(f"Selected problem type: {problem_type}")
     
     if problem_type == "Random Problem":
         # Random problem parameters
@@ -1153,6 +1195,7 @@ def main():
         random_params["max_proc_time"] = st.sidebar.slider("Max Processing Time", 5, 80, 20)
         random_params["seed"] = st.sidebar.number_input("Random Seed", 0, 999, 42)
         job_data = None
+        print(f"Random problem parameters: {random_params}")
     else:
         # Custom problem editor
         st.sidebar.subheader("Job Operations Editor")
@@ -1185,6 +1228,7 @@ def main():
                 int(row["Processing Time"])
             ])
         random_params = None
+        print(f"Custom problem with {len(job_data)} operations defined")
     
     # Multiple runs parameter
     st.sidebar.subheader("Multiple Runs")
@@ -1207,11 +1251,13 @@ def main():
     if ga_selected:
         selected_algos.append("Genetic Algorithm")
     st.session_state.selected_algos = selected_algos
+    print(f"Selected algorithms: {selected_algos}")
     
     # Uncertainty Parameters
     st.sidebar.title("Uncertainty Configuration")
     
     use_uncertainty = st.sidebar.checkbox("Enable Uncertainty", value=False)
+    print(f"Uncertainty enabled: {use_uncertainty}")
     
     # Initialize uncertainty parameters
     uncertainty_params = {}
@@ -1297,6 +1343,8 @@ def main():
         st.session_state.crossover_rate = st.sidebar.slider("Crossover Rate", 0.1, 1.0, 0.8, 0.1)
         st.session_state.mutation_rate = st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.2, 0.1)
         
+        print(f"GA parameters: pop_size={st.session_state.population_size}, gen={st.session_state.generations}")
+        
         if use_uncertainty:
             st.session_state.buffer_mutation_rate = st.sidebar.slider(
                 "Buffer Mutation Rate", 
@@ -1308,6 +1356,7 @@ def main():
     
     # Run simulation button
     if st.sidebar.button("Run Simulation", type="primary", use_container_width=True):
+        print("Run Simulation button clicked")
         with st.spinner(f"Running simulation{' (multiple runs)' if num_runs > 1 else ''}..."):
             results = run_simulation(
                 problem_type, 
@@ -1317,6 +1366,7 @@ def main():
                 uncertainty_params,
                 num_runs
             )
+            print("Simulation completed, storing results in session state")
             st.session_state.results = results
         st.sidebar.success(f"Simulation completed ({num_runs} run{'s' if num_runs > 1 else ''})!")
     
@@ -1326,6 +1376,7 @@ def main():
     with tab1:
         # Display results if available
         if "results" in st.session_state:
+            print("Displaying results")
             display_results(st.session_state.results)
         else:
             st.info("Configure parameters in the sidebar and click 'Run Simulation' to see results.")
@@ -1345,6 +1396,7 @@ def main():
             if first_algo is not None:
                 num_runs = st.session_state.results[first_algo].get("num_runs", 1)
                 if num_runs > 1:
+                    print("Displaying multi-run analysis")
                     plot_multi_run_analysis(st.session_state.results)
                 else:
                     st.info("Multi-run analysis is only available when running the simulation more than once. Set 'Number of Simulation Runs' to a value greater than 1.")
@@ -1352,6 +1404,9 @@ def main():
                 st.info("No results available. Configure parameters in the sidebar and click 'Run Simulation'.")
         else:
             st.info("Configure parameters in the sidebar and click 'Run Simulation' to see results. Make sure to set 'Number of Simulation Runs' to a value greater than 1 for multi-run analysis.")
+    
+    print("Main function completed")
 
 if __name__ == "__main__":
+    print("Starting app_streamlit.py")
     main() 

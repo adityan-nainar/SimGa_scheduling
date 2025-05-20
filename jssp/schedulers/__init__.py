@@ -67,8 +67,10 @@ class Scheduler(ABC):
         Returns:
             Dictionary with average makespan, standard deviation, and other metrics
         """
+        print("    Starting evaluate_with_uncertainty method")
         # If uncertainty is not enabled, just return the basic metrics
         if not self.use_uncertainty:
+            print("    Uncertainty disabled, returning basic metrics")
             makespan = instance.makespan()
             total_flow_time = instance.total_flow_time()
             return {
@@ -80,32 +82,43 @@ class Scheduler(ABC):
                 "makespans": [makespan],
                 "flow_times": [total_flow_time]
             }
-            
+        
+        print(f"    Running {self.num_simulations} uncertainty simulations")
         makespans = []
         flow_times = []
         
         for i in range(self.num_simulations):
+            print(f"    Uncertainty simulation {i+1}/{self.num_simulations}")
             # Create a copy of the instance with the same schedule
             sim_instance = instance.copy()
             
             # Regenerate processing time variability with different random seed
             if sim_instance.processing_time_variability > 0:
+                print(f"    Applying processing time variability: {sim_instance.processing_time_variability}")
                 sim_instance.set_processing_time_variability(sim_instance.processing_time_variability)
             
             # Regenerate machine breakdowns with different random seed
+            has_breakdowns = False
             for machine in sim_instance.machines:
                 if machine.failure_rate > 0:
+                    has_breakdowns = True
                     machine.breakdown_times = []
             
-            sim_horizon = instance.makespan() * 2  # Use a reasonable horizon
-            sim_instance.generate_machine_breakdowns(sim_horizon)
+            if has_breakdowns:
+                print("    Regenerating machine breakdowns")
+                sim_horizon = instance.makespan() * 2  # Use a reasonable horizon
+                sim_instance.generate_machine_breakdowns(sim_horizon)
             
             # Re-simulate the schedule with uncertainty
+            print("    Simulating schedule with uncertainty")
             self.simulate_schedule(sim_instance)
             
             # Record results
-            makespans.append(sim_instance.makespan())
-            flow_times.append(sim_instance.total_flow_time())
+            sim_makespan = sim_instance.makespan()
+            sim_flow_time = sim_instance.total_flow_time()
+            makespans.append(sim_makespan)
+            flow_times.append(sim_flow_time)
+            print(f"    Simulation {i+1} results: makespan={sim_makespan}, flow_time={sim_flow_time}")
         
         # Calculate statistics
         avg_makespan = sum(makespans) / len(makespans)
@@ -116,6 +129,7 @@ class Scheduler(ABC):
         
         # Calculate robust fitness (lower is better)
         robust_fitness = avg_makespan + self.stability_weight * std_makespan
+        print(f"    Uncertainty evaluation complete: avg_makespan={avg_makespan}, std_dev={std_makespan}, robust_fitness={robust_fitness}")
         
         return {
             "makespan": avg_makespan,
