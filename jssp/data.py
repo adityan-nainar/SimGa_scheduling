@@ -285,19 +285,23 @@ class JSSPInstance:
         for machine in self.machines:
             machine.set_failure_parameters(lambda_fail, min_repair, max_repair)
     
-    def generate_machine_breakdowns(self, simulation_horizon: int) -> None:
+    def generate_machine_breakdowns(self, simulation_horizon: int, max_breakdowns: int = 100) -> None:
         """
         Generate breakdown events for machines up to a simulation horizon.
         
         Args:
             simulation_horizon: The time limit for simulation
+            max_breakdowns: Maximum number of breakdowns to generate per machine (prevents infinite loops)
         """
         for machine in self.machines:
             if machine.failure_rate <= 0:
                 continue  # Skip machines with no failures
                 
             current_time = 0
-            while current_time < simulation_horizon:
+            breakdown_count = 0
+            
+            # Limit the number of breakdowns to prevent infinite loops
+            while current_time < simulation_horizon and breakdown_count < max_breakdowns:
                 # Time to next failure
                 if machine.failure_rate > 0:
                     time_to_fail = random.expovariate(machine.failure_rate)
@@ -314,8 +318,13 @@ class JSSPInstance:
                 # Add breakdown
                 machine.add_breakdown(failure_start, repair_time)
                 
-                # Update current time
+                # Update current time and breakdown count
                 current_time = failure_start + repair_time
+                breakdown_count += 1
+                
+            # If we've hit the max_breakdowns limit, log a warning
+            if breakdown_count >= max_breakdowns:
+                print(f"Warning: Machine {machine.machine_id} reached maximum breakdown limit ({max_breakdowns}). Consider reducing failure rate.")
     
     def reset_schedule(self) -> None:
         """Reset all scheduling information."""

@@ -189,8 +189,9 @@ class GeneticScheduler(Scheduler):
         self.elitism_count = elitism_count
         self.tournament_size = tournament_size
     
-    def schedule(self, instance: JSSPInstance) -> Dict[str, Any]:
+    def schedule(self, instance: JSSPInstance, max_time_seconds: int = 60) -> Dict[str, Any]:
         start_time = time.time()
+        max_end_time = start_time + max_time_seconds
         
         # Create initial population
         population = self._initialize_population(instance)
@@ -206,6 +207,11 @@ class GeneticScheduler(Scheduler):
                 uncertainty_results = self.evaluate_with_uncertainty(instance_copy)
                 chromosome.fitness = uncertainty_results["robust_fitness"]
                 chromosome.schedule_result.update(uncertainty_results)
+                
+            # Check if we've exceeded the time limit
+            if time.time() > max_end_time:
+                print(f"Warning: Initial population evaluation exceeded time limit of {max_time_seconds} seconds.")
+                break
         
         # Sort by fitness (makespan - lower is better)
         population.sort(key=lambda x: x.fitness)
@@ -215,6 +221,11 @@ class GeneticScheduler(Scheduler):
         
         # Main evolutionary loop
         for generation in range(self.generations):
+            # Check if we've exceeded the time limit
+            if time.time() > max_end_time:
+                print(f"Warning: GA terminated after {generation} generations due to time limit of {max_time_seconds} seconds.")
+                break
+                
             # Create new population with elitism
             new_population = population[:self.elitism_count]
             
@@ -241,6 +252,10 @@ class GeneticScheduler(Scheduler):
                 
                 # Add to new population
                 new_population.append(offspring)
+                
+                # Check if we've exceeded the time limit
+                if time.time() > max_end_time:
+                    break
             
             # Replace old population
             population = new_population
@@ -256,6 +271,10 @@ class GeneticScheduler(Scheduler):
                         uncertainty_results = self.evaluate_with_uncertainty(instance_copy)
                         chromosome.fitness = uncertainty_results["robust_fitness"]
                         chromosome.schedule_result.update(uncertainty_results)
+                        
+                # Check if we've exceeded the time limit
+                if time.time() > max_end_time:
+                    break
             
             # Sort by fitness
             population.sort(key=lambda x: x.fitness)
@@ -428,7 +447,7 @@ class GeneticScheduler(Scheduler):
     MACHINE_UP   = "MACHINE_UP"
 
 
-    def simulate_schedule(self, instance: JSSPInstance) -> None:
+    def simulate_schedule(self, instance: JSSPInstance, max_events: int = 1000) -> None:
         """
         Simulate a schedule with uncertainty using an event-driven approach.
         
@@ -439,6 +458,7 @@ class GeneticScheduler(Scheduler):
         
         Args:
             instance: The JSSP instance to simulate
+            max_events: Maximum number of events to process (prevents infinite loops)
         """
         # Initialize the event queue (priority queue)
         event_queue = []
@@ -463,7 +483,11 @@ class GeneticScheduler(Scheduler):
                 t = random.expovariate(machine.failure_rate)
                 simulation_horizon = instance.makespan() * 2 if instance.makespan() > 0 else 1000  # Estimate based on makespan
                 
-                while t < simulation_horizon:
+                # Limit the number of breakdowns per machine
+                breakdown_count = 0
+                max_breakdowns_per_machine = 10  # Avoid too many breakdowns per machine
+                
+                while t < simulation_horizon and breakdown_count < max_breakdowns_per_machine:
                     # Generate repair time
                     repair_time = random.uniform(machine.min_repair_time, machine.max_repair_time)
                     
@@ -476,12 +500,15 @@ class GeneticScheduler(Scheduler):
                     ))
                     
                     # Move to next failure time
-                    t += random.expovariate(machine.failure_rate)
+                    t += random.expovariate(machine.failure_rate) + repair_time
+                    breakdown_count += 1
         
-        # Process events until queue is empty
-        while event_queue:
+        # Process events until queue is empty or max events reached
+        events_processed = 0
+        while event_queue and events_processed < max_events:
             event = heapq.heappop(event_queue)
             current_time = event.time
+            events_processed += 1
             
             if event.event_type == EventType.JOB_ARRIVAL:
                 # A job has arrived - try to schedule its first operation

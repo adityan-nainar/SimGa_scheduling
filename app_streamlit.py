@@ -265,7 +265,7 @@ def run_simulation(problem_type, random_params, job_data, use_uncertainty=False,
                             stability_weight=stability_weight
                         )
                         instance_copy = instance.copy()
-                        ga_result = ga_scheduler.schedule(instance_copy)
+                        ga_result = ga_scheduler.schedule(instance_copy, max_time_seconds=120)
                         ga_result["computation_time"] = time.time() - start_time
                         ga_result["gantt_data"], ga_result["breakdown_data"], ga_result["arrival_data"] = extract_gantt_data(instance_copy, "GA")
                         results["Genetic Algorithm"] = ga_result
@@ -1147,8 +1147,8 @@ def main():
     if problem_type == "Random Problem":
         # Random problem parameters
         random_params = {}
-        random_params["num_jobs"] = st.sidebar.slider("Number of Jobs", 2, 100, 5)
-        random_params["num_machines"] = st.sidebar.slider("Number of Machines", 2, 50, 3)
+        random_params["num_jobs"] = st.sidebar.slider("Number of Jobs", 2, 30, 5, help="Larger values significantly increase computation time")
+        random_params["num_machines"] = st.sidebar.slider("Number of Machines", 2, 15, 3, help="Larger values significantly increase computation time")
         random_params["min_proc_time"] = st.sidebar.slider("Min Processing Time", 1, 30, 1)
         random_params["max_proc_time"] = st.sidebar.slider("Max Processing Time", 5, 80, 20)
         random_params["seed"] = st.sidebar.number_input("Random Seed", 0, 999, 42)
@@ -1291,8 +1291,9 @@ def main():
     if ga_selected:
         st.sidebar.subheader("Genetic Algorithm Parameters")
         
-        st.session_state.population_size = st.sidebar.slider("Population Size", 10, 200, 50)
-        st.session_state.generations = st.sidebar.slider("Generations", 10, 500, 100)
+        st.sidebar.write("⚠️ High values may cause long computation times")
+        st.session_state.population_size = st.sidebar.slider("Population Size", 10, 100, 30, help="Larger population sizes improve solution quality but increase computation time")
+        st.session_state.generations = st.sidebar.slider("Generations", 10, 200, 50, help="More generations improve solution quality but increase computation time")
         st.session_state.crossover_rate = st.sidebar.slider("Crossover Rate", 0.1, 1.0, 0.8, 0.1)
         st.session_state.mutation_rate = st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.2, 0.1)
         
