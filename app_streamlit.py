@@ -70,14 +70,18 @@ def extract_gantt_data(instance, algo_name):
     
     # Extract machine breakdown data
     for m, machine in enumerate(instance.machines):
-        for start_time, end_time in machine.breakdown_times:
-            breakdown_data.append({
-                'machine': f'Machine {m}',
-                'start': start_time,
-                'end': end_time,
-                'duration': end_time - start_time,
-                'text': f'Breakdown ({end_time - start_time}t)'
-            })
+        # Convert any tuple or list to string representation when needed for dictionary keys
+        for breakdown in machine.breakdown_times:
+            # Ensure breakdown is a tuple with two elements
+            if isinstance(breakdown, tuple) and len(breakdown) == 2:
+                start_time, end_time = breakdown
+                breakdown_data.append({
+                    'machine': f'Machine {m}',
+                    'start': float(start_time),
+                    'end': float(end_time),
+                    'duration': float(end_time - start_time),
+                    'text': f'Breakdown ({end_time - start_time}t)'
+                })
     
     return data, breakdown_data, arrival_data
 

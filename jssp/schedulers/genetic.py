@@ -309,8 +309,8 @@ class GeneticScheduler(Scheduler):
         operations of the same job are preserved in the offspring.
         """
         # Extract the sequence without buffer tokens
-        p1_seq = [gene for gene in parent1.gene_sequence if gene != BUFFER_TOKEN]
-        p2_seq = [gene for gene in parent2.gene_sequence if gene != BUFFER_TOKEN]
+        p1_seq = tuple(gene for gene in parent1.gene_sequence if gene != BUFFER_TOKEN)
+        p2_seq = tuple(gene for gene in parent2.gene_sequence if gene != BUFFER_TOKEN)
         
         # Initialize child sequence
         child_sequence = []
@@ -331,38 +331,49 @@ class GeneticScheduler(Scheduler):
         
         # Build the child sequence
         parents = [p1_seq, p2_seq]
-        pos     = {0: 0,    1: 0}
+        pos = [0, 0]  # Position in each parent sequence
 
+        # Make sure to use a hashable type (tuple) for set operations
         remaining = set(p1_seq)  # All operations that need to be scheduled
         
         while len(child_sequence) < len(p1_seq):
             parent_idx = parent_choice[len(child_sequence)] if len(child_sequence) < len(parent_choice) else random.choice([0, 1])
-            current_parent = parents[parent_idx]
             
-            if pos[current_parent] >= len(current_parent):
+            # Check if this parent has any operations left
+            if pos[parent_idx] >= len(parents[parent_idx]):
                 # This parent is exhausted, switch to the other one
                 parent_idx = 1 - parent_idx
-                current_parent = parents[parent_idx]
+            
+            # Check if both parents are exhausted
+            if pos[0] >= len(parents[0]) and pos[1] >= len(parents[1]):
+                break
                 
             # Try to get a valid operation from current parent
-            attempts = 0
-            while attempts < 2:          # try P1 then P2
-                current_parent = parents[attempts]
-                if pos[current_parent] >= len(current_parent):
-                    attempts += 1
+            parent_tried = 0
+            while parent_tried < 2:  # Try both parents if needed
+                current_idx = (parent_idx + parent_tried) % 2
+                current_parent = parents[current_idx]
+                current_pos = pos[current_idx]
+                
+                if current_pos >= len(current_parent):
+                    parent_tried += 1
                     continue
                     
-                gene = current_parent[pos[current_parent]]
+                gene = current_parent[current_pos]
+                # Ensure gene is a tuple
+                if isinstance(gene, list):
+                    gene = tuple(gene)
+                    
                 if can_emit(gene, emitted):
                     child_sequence.append(gene)
                     emitted.add(gene)
                     if gene in remaining:  # Check if the gene is in remaining before removing
                         remaining.remove(gene)
-                    pos[current_parent] += 1
+                    pos[current_idx] += 1
                     available_op_idx[gene[0]] += 1
                     break
-                pos[current_parent] += 1
-                attempts += 1
+                pos[current_idx] += 1
+                parent_tried += 1
             else:  # Fallback: dump *any* remaining eligible gene
                 eligible_genes = [g for g in remaining if can_emit(g, emitted)]
                 if eligible_genes:
@@ -650,8 +661,18 @@ def precedence_preserving_crossover(p1: 'Chromosome', p2: 'Chromosome') -> 'Chro
                 # Skip buffer tokens
                 if gene == BUFFER_TOKEN:
                     continue
+                # Ensure gene is a tuple
+                if isinstance(gene, list):
+                    gene = tuple(gene)
                 job, op = gene
-                if all((job, k) in emitted for k in range(op)):
+                # Check if all predecessor operations are emitted
+                can_emit = True
+                for k in range(op):
+                    pred_gene = (job, k)
+                    if pred_gene not in emitted:
+                        can_emit = False
+                        break
+                if can_emit:
                     child.append(gene); emitted.add(gene); break
             if parent is p1: pos1 = pos
             else:            pos2 = pos

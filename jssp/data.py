@@ -400,11 +400,13 @@ class JSSPInstance:
         # Copy machines
         for machine in self.machines:
             machine_copy = Machine(machine.machine_id)
-            machine_copy.breakdown_times = list(machine.breakdown_times)
+            # Ensure breakdown_times is copied as a list of tuples
+            machine_copy.breakdown_times = [(float(start), float(end)) for start, end in machine.breakdown_times]
             machine_copy.failure_rate = machine.failure_rate
             machine_copy.min_repair_time = machine.min_repair_time
             machine_copy.max_repair_time = machine.max_repair_time
             machine_copy.available = machine.available
+            machine_copy.next_free = machine.next_free
             instance_copy.machines.append(machine_copy)
         
         # Copy jobs and operations

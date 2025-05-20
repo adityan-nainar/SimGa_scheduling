@@ -92,8 +92,22 @@ class SPTScheduler(Scheduler):
                 if all(idx >= len(instance.jobs[j].operations) for j, idx in enumerate(current_op_idx)):
                     break
                 # Otherwise, advance time to next machine release
-                next_machine_time = min(mt for mt in machine_available_times if mt > min(job_available_times))
-                for j in range(num_jobs): job_available_times[j] = max(job_available_times[j], next_machine_time)
+                try:
+                    job_min_time = min(job_available_times)
+                    # Filter machine times that are greater than minimum job time
+                    later_machine_times = [mt for mt in machine_available_times if mt > job_min_time]
+                    
+                    if not later_machine_times:
+                        # If no machine times are later than the min job time, just use the min job time
+                        next_machine_time = job_min_time
+                    else:
+                        next_machine_time = min(later_machine_times)
+                        
+                    for j in range(num_jobs):
+                        job_available_times[j] = max(job_available_times[j], next_machine_time)
+                except ValueError:
+                    # If we hit a value error (empty list), we're done
+                    break
                 continue
 
             # Pick the ready operation with smallest processing time
